@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Отдел Продаж - Распределение",
+  "version": "1.0",
+  "description": "Подсветка сделок и массовое открытие по категориям",
+
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+
+  "permissions": ["tabs", "storage", "downloads", "clipboardWrite", "offscreen", "notifications"],
+  "host_permissions": ["https://playerok.com/*", "https://fragment.com/*", "file:///*"],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://playerok.com/*"],
+      "js": [
+        "values.js",
+        "state.js",
+        "matchers.js",
+        "filters.js",
+        "builders.js",
+        "ui.js",
+        "content.js"
+      ]
+    },
+    {
+      "matches": ["https://fragment.com/*"],
+      "js": ["fragment.js"]
+    }
+  ]
+}

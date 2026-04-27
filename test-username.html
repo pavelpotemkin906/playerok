@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Test Username Copy - /deal/test123</title>
+</head>
+<body>
+    <h1>Тест копирования username</h1>
+    
+    <p><strong>Важно:</strong> Откройте эту страницу по адресу с /deal/ в URL (например: file:///C:/deal/test-username.html)</p>
+    
+    <h3>Получение</h3>
+    <div>
+        <div>Telegram Username</div>
+        <div>@test_user123</div>
+    </div>
+    
+    <hr>
+    
+    <h3>Получение</h3>
+    <div>
+        <div>username</div>
+        <div>@alice_2024</div>
+    </div>
+    
+    <hr>
+    
+    <h3>Получение</h3>
+    <div>
+        <div>Юзернейм</div>
+        <div>bob_jones</div>
+    </div>
+    
+    <hr>
+    
+    <h3>Получение</h3>
+    <div>
+        <div>@username:</div>
+        <div>@charlie_smith</div>
+    </div>
+    
+    <hr>
+    
+    <h3>Получение</h3>
+    <div>
+        <div>Имя пользователя</div>
+        <div>user123</div>
+    </div>
+    
+    <p><strong>Инструкция:</strong></p>
+    <ol>
+        <li>Переименуйте файл или папку так, чтобы путь содержал "/deal/" (например: C:\deal\test-username.html)</li>
+        <li>Откройте эту страницу в браузере с установленным расширением</li>
+        <li>Откройте консоль (F12) и введите: <code>autoCopyDeliveryData()</code></li>
+        <li>Проверьте буфер обмена - должен скопироваться username</li>
+        <li>Проверьте, что переключатель "Автокопирование" включен в панели расширения</li>
+        <li>Проверьте localStorage: <code>localStorage.getItem('dist_autocopy_enabled')</code> (должно быть null или 'true')</li>
+    </ol>
+    
+    <p><strong>Для теста в консоли:</strong></p>
+    <pre>
+// Проверить, загружена ли функция
+typeof autoCopyDeliveryData
+
+// Проверить состояние автокопирования
+localStorage.getItem('dist_autocopy_enabled')
+
+// Включить автокопирование
+localStorage.setItem('dist_autocopy_enabled', 'true')
+
+// Вызвать функцию вручную
+autoCopyDeliveryData()
+    </pre>
+</body>
+</html>
