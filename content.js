@@ -1,5 +1,31 @@
 createPanel();
 
+// Надёжное копирование с fallback-ами
+async function copyToClipboardSafe(text) {
+  // 1. Пробуем Clipboard API (работает при user gesture или secure context)
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {}
+  // 2. Fallback через execCommand
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) return true;
+  } catch (_) {}
+  // 3. Fallback через background service worker → offscreen
+  try {
+    chrome.runtime.sendMessage({ type: "COPY_TO_CLIPBOARD", text: text });
+    return true;
+  } catch (_) {}
+  return false;
+}
+
 const GREETING_NAME_KEY = "dist_greeting_name";
 const LAST_CODE_KEY = "lastCode";
 const LAST_CODES_KEY = "lastCodes";
@@ -128,31 +154,47 @@ function isPlayerokErrorNode(el) {
   }
   return false;
 }
+let _autoCopyDeliveryDataTimer = null;
 function autoCopyDeliveryData() {
   if (!location.href.includes('/deal/')) return;
   // КРИТИЧНО: копируем ТОЛЬКО если эта вкладка активна (видна пользователю)
   if (document.visibilityState !== 'visible') return;
   
-  // NEW: Check auto-copy toggle state (Bug 3 fix)
+  // Авто-копирование управляется только своим тогглом, независимо от мастера/распределения
   const autoCopyEnabled = localStorage.getItem('dist_autocopy_enabled');
   if (autoCopyEnabled === 'false') return; // Skip if disabled
 
-  // 1. Ищем заголовок "Получение" — ищем маленькие элементы, чей текст содержит это слово
+  // 1. Ищем заголовок "Получение" — используем TreeWalker для быстрого поиска текста
   let poluchenieBlock = null;
-  const allElements = document.querySelectorAll('div, span, h2, h3, h4, p');
-  for (const el of allElements) {
+  // Используем XPath для точного поиска элементов, содержащих "Получение"
+  const xpathResult = document.evaluate(
+    "//*[self::div or self::span or self::h2 or self::h3 or self::h4 or self::p][contains(.,'Получение')]",
+    document.body, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
+  );
+  // Метки/паттерны, наличие которых означает «здесь есть данные получателя»
+  const DATA_HINTS = /id игрока|игровой id|player id|user id|uid|zone id|id сервера|server id|username|юзернейм|telegram username|@[A-Za-z0-9_]{3,}|[A-Za-z0-9]+-[A-Za-z0-9]+-[A-Za-z0-9]+|\b\d{7,}\b/i;
+
+  for (let i = 0; i < xpathResult.snapshotLength; i++) {
+    const el = xpathResult.snapshotItem(i);
     if (el.closest('[id^="dist-"]')) continue;
     const ownText = el.textContent.trim();
-    // Ищем элемент, который содержит "Получение" и при этом достаточно маленький (заголовок, не весь блок)
-    if (ownText.includes('Получение') && ownText.length < 40 && el.offsetParent !== null) {
+    if (ownText.length < 40 && el.offsetParent !== null) {
       // Поднимаемся вверх от заголовка, чтобы найти контейнер с данными
       let container = el.parentElement;
       for (let i = 0; i < 5; i++) {
         if (!container || container === document.body) break;
         const containerText = container.innerText || "";
-        // Контейнер должен содержать "Получение" + ещё какой-то контент (данные или кнопку Показать/Скрыть)
-        if (containerText.includes('Получение') && 
-            (containerText.includes('Показать') || containerText.includes('Скрыть') || container.querySelector('svg'))) {
+        // Контейнер валиден если содержит "Получение" + один из:
+        //  - кнопку Показать/Скрыть
+        //  - SVG (иконка раскрытия)
+        //  - явные метки данных (ID, username и т.п.)
+        //  - длинные числа/коды
+        if (containerText.includes('Получение') && (
+            containerText.includes('Показать') ||
+            containerText.includes('Скрыть') ||
+            container.querySelector('svg') ||
+            DATA_HINTS.test(containerText)
+        )) {
           poluchenieBlock = container;
           break;
         }
@@ -168,13 +210,19 @@ function autoCopyDeliveryData() {
   let clickedShow = false;
   poluchenieBlock.querySelectorAll('div, span, a, button').forEach(el => {
     const t = el.textContent.trim();
-    if (t === 'Показать' && el.offsetParent !== null && el.children.length === 0) {
-      el.click();
-      clickedShow = true;
+    // Ищем "Показать" более гибко (может быть иконка внутри)
+    if ((t === 'Показать' || t.includes('Показать')) && el.offsetParent !== null) {
+      if (el.tagName === 'BUTTON' || el.onclick || el.getAttribute('role') === 'button' || el.classList.contains('btn') || el.style.cursor === 'pointer') {
+         el.click();
+         clickedShow = true;
+      }
     }
   });
   // Если кликнули "Показать" — данные появятся через мгновение, MutationObserver вызовет нас снова
-  if (clickedShow) return;
+  if (clickedShow) {
+    showMiniStatus("🔍 Раскрываю данные...");
+    return;
+  }
 
   // 3. Парсим текст блока "Получение" строка за строкой
   const blockText = poluchenieBlock.innerText || "";
@@ -216,22 +264,22 @@ function autoCopyDeliveryData() {
 
     // Если предыдущая строка была меткой — эта строка = значение
     if (grabNext) {
-      // Bug 1 fix: Update regex to accept "@" symbol
-      if (/^\d{3,}$/.test(line) || /^@?[A-Za-z0-9\-_]{4,}$/.test(line)) {
+      // Принимаем ID (цифры), Юзернеймы (с @ или без), или комбинированные строки
+      if (/^\d{3,}$/.test(line) || /^@?[A-Za-z0-9\-_]{4,}$/.test(line) || /[A-Za-z0-9]+-[A-Za-z0-9]+/.test(line)) {
         foundValues.push(line);
       }
       grabNext = false;
       continue;
     }
 
-    // Проверяем, является ли строка меткой
+    // Проверяем, является ли строка меткой (ID, Юзернейм и т.д.)
     if (labels.some(lbl => low === lbl || low === lbl + ':' || low.startsWith(lbl + ' ') || low.startsWith(lbl + ':'))) {
-      // Может быть значение на той же строке: "Игровой ID 522261411591"
       let cleaned = line;
       labels.forEach(lbl => {
         cleaned = cleaned.replace(new RegExp('^' + lbl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':?\\s*', 'i'), '').trim();
       });
-      if (cleaned && (/^\d{3,}$/.test(cleaned) || /^@?[A-Za-z0-9\-_]{4,}$/.test(cleaned))) {
+      // Если значение на той же строке
+      if (cleaned && (/^\d{3,}$/.test(cleaned) || /^@?[A-Za-z0-9\-_]{4,}$/.test(cleaned) || /[A-Za-z0-9]+-[A-Za-z0-9]+/.test(cleaned))) {
         foundValues.push(cleaned);
       } else {
         grabNext = true; // Значение на следующей строке
@@ -239,8 +287,8 @@ function autoCopyDeliveryData() {
       continue;
     }
 
-    // Если строка — просто число (ID без метки), тоже берём
-    if (/^\d{5,}$/.test(line)) {
+    // Если строка — просто длинное число (ID без метки), тоже берём
+    if (/^\d{7,}$/.test(line)) {
       foundValues.push(line);
     }
   }
@@ -270,15 +318,26 @@ function autoCopyDeliveryData() {
     const signature = dealId + ":" + textToCopy;
 
     const now = Date.now();
-    if (window._lastAutoCopiedSig === signature && (now - (window._lastAutoCopiedTime || 0)) < 15000) return;
+
+    // Защита от копирования стейл-данных при SPA-переходе:
+    // если URL изменился < 1500мс назад — НЕ копируем сразу, ждём пока DOM стабилизируется
+    if (window._lastUrlChangeTime && (now - window._lastUrlChangeTime) < 1500) {
+      return;
+    }
+
+    // Дополнительная защита: значение должно совпадать с предыдущим скан-ом
+    // (т.е. блок «Получение» уже отрисован полностью, не во время transition)
+    if (window._pendingAutocopySig !== signature) {
+      window._pendingAutocopySig = signature;
+      return;
+    }
+
+    if (window._lastAutoCopiedSig === signature && (now - (window._lastAutoCopiedTime || 0)) < 5000) return;
 
     window._lastAutoCopiedSig = signature;
     window._lastAutoCopiedTime = now;
 
-    navigator.clipboard.writeText(textToCopy).then(() => {
-      showMiniStatus("📦 ID скопирован: " + textToCopy);
-    }).catch(() => {
-      chrome.runtime.sendMessage({ type: "COPY_TO_CLIPBOARD", text: textToCopy });
+    copyToClipboardSafe(textToCopy).then(() => {
       showMiniStatus("📦 ID скопирован: " + textToCopy);
     });
   }
@@ -288,15 +347,23 @@ function autoCopyDeliveryData() {
 setTimeout(() => { autoCopyDeliveryData(); autoInsertGreeting(); }, 500);
 setTimeout(() => { autoCopyDeliveryData(); autoInsertGreeting(); }, 2000);
 
+// 🔑 ОПТИМИЗАЦИЯ: Дебаунс для MutationObserver — не вызываем тяжёлые функции на каждую мутацию
+let _deliveryObserverTimer = null;
 const deliveryObserver = new MutationObserver(() => {
-  const currentDealId = (location.href.match(/\/(deal|chats)\/([^\/\?#]+)/) || [])[2] || "";
-  if (window._lastObservedDealId !== currentDealId) {
-    window._lastObservedDealId = currentDealId;
-    window._greetingInsertedForDeal = null;
-    window._lastAutoCopiedSig = null;
-  }
-  autoCopyDeliveryData(); 
-  autoInsertGreeting();
+  if (_deliveryObserverTimer) return;
+  _deliveryObserverTimer = setTimeout(() => {
+    _deliveryObserverTimer = null;
+    const currentDealId = (location.href.match(/\/(deal|chats)\/([^\/\?#]+)/) || [])[2] || "";
+    if (window._lastObservedDealId !== currentDealId) {
+      window._lastObservedDealId = currentDealId;
+      window._greetingInsertedForDeal = null;
+      window._lastAutoCopiedSig = null;
+      window._pendingAutocopySig = null;
+      window._lastUrlChangeTime = Date.now(); // запоминаем момент смены сделки
+    }
+    autoCopyDeliveryData();
+    autoInsertGreeting();
+  }, 800);
 });
 deliveryObserver.observe(document.body, { childList: true, subtree: true });
 
@@ -310,6 +377,9 @@ window.addEventListener('visibilitychange', () => {
 
 async function autoInsertGreeting() {
   if (!location.href.includes('/deal/') && !location.href.includes('/chats/')) return;
+  
+  // Авто-приветствие управляется только своим тогглом, независимо от мастера/распределения
+  if (localStorage.getItem('dist_greeting_enabled') === 'false') return;
   
   const dealId = (location.href.match(/\/(deal|chats)\/([^\/\?#]+)/) || [])[2] || "";
   if (window._greetingInsertedForDeal === dealId) return;
@@ -455,17 +525,79 @@ function buildGiftCardTemplate(c) { return getTemplate("giftcard").replace("{cod
 function buildRobloxPremiumTemplate(codes) { return getTemplate("robloxpremium").replace("{code1}",codes[0]).replace("{code2}",codes[1]).replace("{code3}",codes[2]); }
 function buildBrazilTemplate(c) { return getTemplate("brazil").replace("{code}", c); }
 function updateGreetingUi(name) {
-  const cur = document.querySelector("#dist-template-current");
-  if (cur) cur.textContent = name ? `Имя: ${name}` : "Имя: не задано";
-  const btn = document.querySelector("#dist-template-settings span");
-  if (btn) btn.textContent = name ? `Имя шаблона: ${name}` : "Имя шаблона";
+  const current = name || 'не задано';
+  const btnText = document.querySelector("#dist-template-btn-text");
+  if (btnText) btnText.textContent = 'Имя шаблона: ' + current;
 }
 async function refreshGreetingUi() { updateGreetingUi(await getSavedGreetingName()); }
 async function openGreetingNamePrompt() {
   const cur = await getSavedGreetingName();
-  const entered = prompt("Введите ваше имя в шаблон", cur || "");
-  if (!entered || !entered.trim()) return "";
-  const clean = entered.trim(); await saveGreetingName(clean); updateGreetingUi(clean); return clean;
+  // Удаляем старую копию если открыта повторно
+  document.querySelector("#dist-greeting-modal")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "dist-greeting-modal";
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(6px);z-index:99999999;display:flex;align-items:center;justify-content:center;font-family:'Inter',system-ui,sans-serif;animation:dist-fade-in .2s ease;`;
+
+  const box = document.createElement("div");
+  box.style.cssText = `width:min(94vw,420px);background:linear-gradient(165deg,rgba(12,16,32,0.97),rgba(6,8,20,0.98));border:1px solid rgba(99,102,241,0.35);border-radius:18px;padding:22px;color:#e2e8f0;box-shadow:0 30px 70px rgba(0,0,0,0.7),0 0 50px rgba(99,102,241,0.12);`;
+
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:16px">
+      <div style="width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7);box-shadow:0 0 10px rgba(99,102,241,0.6)"></div>
+      <span style="font-weight:800;font-size:14px;letter-spacing:0.4px;flex:1">Шаблоны и имя</span>
+      <div id="dist-greet-close" style="cursor:pointer;color:#64748b;font-size:22px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(51,65,85,0.35);transition:all .15s ease">×</div>
+    </div>
+
+    <div style="font-size:11px;color:#94a3b8;margin-bottom:6px;letter-spacing:0.2px">Ваше имя (вставляется в шаблоны вместо <code style="background:rgba(99,102,241,0.15);padding:1px 5px;border-radius:4px;color:#a5b4fc;font-size:10px">{name}</code>)</div>
+    <input id="dist-greet-name" placeholder="Например: Алексей" value="${(cur || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;background:rgba(9,11,22,0.7);border:1px solid rgba(99,102,241,0.25);color:#f1f5f9;border-radius:10px;padding:11px 13px;font-size:13px;font-weight:600;outline:none;font-family:inherit;transition:all .2s ease" autofocus />
+
+    <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(99,102,241,0.25),transparent);margin:18px 0"></div>
+
+    <button id="dist-greet-edit-tpl" style="width:100%;padding:12px 14px;background:linear-gradient(135deg,rgba(99,102,241,0.22),rgba(139,92,246,0.14));border:1px solid rgba(99,102,241,0.4);color:#c7d2fe;border-radius:11px;cursor:pointer;font-size:12.5px;font-weight:700;font-family:inherit;letter-spacing:0.3px;transition:all .2s ease;display:flex;align-items:center;justify-content:center;gap:8px">
+      <span style="font-size:15px">✏️</span> Редактировать все шаблоны
+    </button>
+    <div style="font-size:10px;color:#64748b;margin-top:7px;text-align:center">Откройте полный редактор: добавление, редактирование, группы</div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+      <button id="dist-greet-cancel" style="padding:9px 16px;background:rgba(51,65,85,0.35);border:1px solid rgba(51,65,85,0.5);color:#94a3b8;border-radius:10px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit">Отмена</button>
+      <button id="dist-greet-save" style="padding:9px 18px;background:linear-gradient(135deg,#6366f1,#a855f7);border:1px solid rgba(99,102,241,0.7);color:#fff;border-radius:10px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;box-shadow:0 4px 14px rgba(99,102,241,0.35)">Сохранить</button>
+    </div>
+  `;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  const input = box.querySelector("#dist-greet-name");
+  setTimeout(() => input.focus(), 50);
+
+  const close = () => overlay.remove();
+  box.querySelector("#dist-greet-close").onclick = close;
+  box.querySelector("#dist-greet-cancel").onclick = close;
+  overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
+
+  const doSave = async () => {
+    const v = (input.value || "").trim();
+    if (v) { await saveGreetingName(v); updateGreetingUi(v); showMiniStatus("Имя сохранено: " + v); }
+    close();
+  };
+
+  box.querySelector("#dist-greet-save").onclick = doSave;
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); doSave(); }
+    if (e.key === "Escape") close();
+  });
+
+  box.querySelector("#dist-greet-edit-tpl").onclick = async () => {
+    // Сначала сохраняем имя если изменилось, затем открываем редактор
+    const v = (input.value || "").trim();
+    if (v) { await saveGreetingName(v); updateGreetingUi(v); }
+    close();
+    if (typeof openTemplateEditor === "function") openTemplateEditor();
+  };
+
+  return new Promise(resolve => {
+    overlay.addEventListener("remove", () => resolve(""), { once: true });
+  });
 }
 window.openGreetingNamePrompt = openGreetingNamePrompt;
 
@@ -473,9 +605,9 @@ function showUsedCodeWarning(code, onConfirm) {
   document.querySelector("#dist-used-warn")?.remove();
   const wrap = document.createElement("div");
   wrap.id = "dist-used-warn";
-  wrap.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(8,12,24,0.95);backdrop-filter:blur(16px);border:1px solid rgba(239,68,68,0.35);border-radius:14px;padding:12px 16px;z-index:9999999;font-size:12px;color:#fca5a5;box-shadow:0 8px 32px rgba(0,0,0,0.6);min-width:260px;max-width:340px;font-family:Inter,sans-serif;`;
+  wrap.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(9,11,22,0.96);backdrop-filter:blur(16px);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:11px 14px;z-index:9999999;font-size:12px;color:#fca5a5;box-shadow:0 8px 28px rgba(0,0,0,0.55);min-width:240px;max-width:320px;font-family:'Inter',system-ui,sans-serif;`;
   const shortCode = String(code||"").slice(0,20)+(String(code||"").length>20?"…":"");
-  wrap.innerHTML = `<div style="display:flex;align-items:center;gap:7px;margin-bottom:8px"><div style="width:7px;height:7px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.6);flex-shrink:0"></div><span style="font-weight:700;font-size:12px;color:#fca5a5">Код уже использован</span></div><div style="color:#fde68a;font-size:11px;margin-bottom:10px;word-break:break-all;padding:5px 8px;background:rgba(253,230,138,0.06);border-radius:7px;border:1px solid rgba(253,230,138,0.12)">${shortCode}</div><div style="display:flex;gap:6px;justify-content:flex-end"><button id="dist-used-cancel" style="padding:5px 12px;background:rgba(51,65,85,0.4);border:1px solid rgba(51,65,85,0.6);color:#94a3b8;border-radius:8px;cursor:pointer;font-size:11px;font-family:Inter,sans-serif">Отмена</button><button id="dist-used-confirm" style="padding:5px 12px;background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;font-family:Inter,sans-serif">Вставить</button></div>`;
+  wrap.innerHTML = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:7px"><div style="width:6px;height:6px;border-radius:50%;background:#ef4444;flex-shrink:0"></div><span style="font-weight:700;font-size:12px;color:#fca5a5">Код уже использован</span></div><div style="color:#fde68a;font-size:11px;margin-bottom:9px;word-break:break-all;padding:4px 7px;background:rgba(253,230,138,0.05);border-radius:6px;border:1px solid rgba(253,230,138,0.1)">${shortCode}</div><div style="display:flex;gap:5px;justify-content:flex-end"><button id="dist-used-cancel" style="padding:5px 11px;background:rgba(51,65,85,0.35);border:1px solid rgba(51,65,85,0.5);color:#64748b;border-radius:7px;cursor:pointer;font-size:11px;font-family:inherit">Отмена</button><button id="dist-used-confirm" style="padding:5px 11px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:#fca5a5;border-radius:7px;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit">Вставить</button></div>`;
   document.body.appendChild(wrap);
   wrap.querySelector("#dist-used-cancel").onclick = () => wrap.remove();
   wrap.querySelector("#dist-used-confirm").onclick = () => { wrap.remove(); onConfirm(); };
@@ -809,11 +941,11 @@ function openTemplateEditor() {
   overlay.id = "dist-tpl-editor";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999999;display:flex;align-items:center;justify-content:center;";
   const box = document.createElement("div");
-  box.style.cssText = "background:rgba(8,12,24,0.97);backdrop-filter:blur(20px);border:1px solid rgba(99,102,241,0.22);border-radius:16px;padding:14px;width:min(94vw,680px);max-height:90vh;display:flex;flex-direction:column;font-family:Inter,sans-serif;color:#e2e8f0;box-shadow:0 24px 60px rgba(0,0,0,.7);overflow:hidden;";
+  box.style.cssText = "background:rgba(9,11,22,0.97);backdrop-filter:blur(20px);border:1px solid rgba(99,102,241,0.2);border-radius:14px;padding:13px;width:min(94vw,660px);max-height:90vh;display:flex;flex-direction:column;font-family:'Inter',system-ui,sans-serif;color:#e2e8f0;box-shadow:0 24px 60px rgba(0,0,0,.7);overflow:hidden;";
 
   const hdr = document.createElement("div");
-  hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-shrink:0;";
-  hdr.innerHTML = '<div style="width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);flex-shrink:0"></div><span style="font-size:13px;font-weight:700;color:#e2e8f0;flex:1">✏️ Редактор шаблонов</span><input id="dist-tpl-ed-search" placeholder="🔍 Поиск..." style="background:rgba(15,23,42,0.8);border:1px solid rgba(99,102,241,0.25);color:#e2e8f0;border-radius:8px;padding:4px 9px;font-size:11px;outline:none;font-family:Inter,sans-serif;width:140px;" /><div id="dist-tpl-close" style="cursor:pointer;color:#475569;font-size:18px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:rgba(51,65,85,0.4);">×</div>';
+  hdr.style.cssText = "display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-shrink:0;";
+  hdr.innerHTML = '<div style="width:7px;height:7px;border-radius:50%;background:#6366f1;flex-shrink:0"></div><span style="font-size:13px;font-weight:700;color:#e2e8f0;flex:1">✏️ Редактор шаблонов</span><input id="dist-tpl-ed-search" placeholder="🔍 Поиск..." style="background:rgba(15,23,42,0.7);border:1px solid rgba(99,102,241,0.2);color:#e2e8f0;border-radius:7px;padding:4px 9px;font-size:11px;outline:none;font-family:inherit;width:130px;" /><div id="dist-tpl-close" style="cursor:pointer;color:#475569;font-size:17px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:rgba(51,65,85,0.35);">×</div>';
   box.appendChild(hdr);
 
   const scrollArea = document.createElement("div");
@@ -886,7 +1018,7 @@ function openTemplateEditor() {
     const current = customTemplates[item.key] !== undefined ? customTemplates[item.key] : defaultText;
 
     const wrap = document.createElement("div");
-    wrap.style.cssText = "margin-bottom:8px;background:rgba(15,23,42,0.5);border:1px solid " + (pinned ? "rgba(99,102,241,0.35)" : "rgba(51,65,85,0.4)") + ";border-radius:10px;padding:8px 10px;";
+    wrap.style.cssText = "margin-bottom:7px;background:rgba(15,23,42,0.45);border:1px solid " + (pinned ? "rgba(99,102,241,0.3)" : "rgba(51,65,85,0.35)") + ";border-radius:9px;padding:7px 9px;";
 
     const labelRow = document.createElement("div");
     labelRow.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:5px;";
@@ -926,7 +1058,7 @@ function openTemplateEditor() {
 
     const ta = document.createElement("textarea");
     ta.dataset.tplKey = item.key; ta.value = current;
-    ta.style.cssText = "width:100%;box-sizing:border-box;height:75px;background:rgba(8,12,24,0.7);border:1px solid rgba(51,65,85,0.4);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:11px;font-family:Inter,sans-serif;resize:vertical;outline:none;";
+    ta.style.cssText = "width:100%;box-sizing:border-box;height:72px;background:rgba(9,11,22,0.7);border:1px solid rgba(51,65,85,0.35);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:11px;font-family:'Inter',system-ui,sans-serif;resize:vertical;outline:none;";
     ta.onfocus = () => { ta.style.borderColor = "rgba(99,102,241,0.5)"; };
     ta.onblur = () => { ta.style.borderColor = "rgba(51,65,85,0.4)"; };
 
@@ -939,15 +1071,15 @@ function openTemplateEditor() {
     dlg.id = "dist-add-item-dialog";
     dlg.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:999999999;display:flex;align-items:center;justify-content:center;";
     const inner = document.createElement("div");
-    inner.style.cssText = "background:rgba(8,12,24,0.98);border:1px solid rgba(99,102,241,0.3);border-radius:14px;padding:16px;width:min(92vw,460px);font-family:Inter,sans-serif;color:#e2e8f0;";
+    inner.style.cssText = "background:rgba(9,11,22,0.98);border:1px solid rgba(99,102,241,0.25);border-radius:13px;padding:15px;width:min(92vw,440px);font-family:'Inter',system-ui,sans-serif;color:#e2e8f0;";
     inner.innerHTML = `
-      <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:12px">➕ Новый шаблон в "${groupName}"</div>
-      <div style="margin-bottom:8px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Название</div><input id="new-tpl-label" placeholder="Например: Мой шаблон" style="width:100%;box-sizing:border-box;background:rgba(8,12,24,0.7);border:1px solid rgba(51,65,85,0.4);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:12px;outline:none;font-family:Inter,sans-serif;" /></div>
-      <div style="margin-bottom:8px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Тип</div><select id="new-tpl-type" style="width:100%;box-sizing:border-box;background:rgba(8,12,24,0.7);border:1px solid rgba(51,65,85,0.4);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:12px;outline:none;font-family:Inter,sans-serif;"><option value="plain">Обычный текст</option><option value="greeting">С именем {name}</option><option value="code">С кодом {code}</option></select></div>
-      <div style="margin-bottom:12px"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px">Текст шаблона</div><textarea id="new-tpl-text" rows="5" style="width:100%;box-sizing:border-box;background:rgba(8,12,24,0.7);border:1px solid rgba(51,65,85,0.4);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:11px;font-family:Inter,sans-serif;resize:vertical;outline:none;" placeholder="Введите текст шаблона..."></textarea></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button id="new-tpl-cancel" style="padding:6px 14px;background:rgba(51,65,85,0.4);border:1px solid rgba(51,65,85,0.6);color:#94a3b8;border-radius:8px;cursor:pointer;font-size:12px;font-family:Inter,sans-serif;">Отмена</button>
-        <button id="new-tpl-save" style="padding:6px 14px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:Inter,sans-serif;">Добавить</button>
+      <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:11px">➕ Новый шаблон в "${groupName}"</div>
+      <div style="margin-bottom:7px"><div style="font-size:11px;color:#64748b;margin-bottom:4px">Название</div><input id="new-tpl-label" placeholder="Например: Мой шаблон" style="width:100%;box-sizing:border-box;background:rgba(9,11,22,0.7);border:1px solid rgba(51,65,85,0.35);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:12px;outline:none;font-family:inherit;" /></div>
+      <div style="margin-bottom:7px"><div style="font-size:11px;color:#64748b;margin-bottom:4px">Тип</div><select id="new-tpl-type" style="width:100%;box-sizing:border-box;background:rgba(9,11,22,0.7);border:1px solid rgba(51,65,85,0.35);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:12px;outline:none;font-family:inherit;"><option value="plain">Обычный текст</option><option value="greeting">С именем {name}</option><option value="code">С кодом {code}</option></select></div>
+      <div style="margin-bottom:11px"><div style="font-size:11px;color:#64748b;margin-bottom:4px">Текст шаблона</div><textarea id="new-tpl-text" rows="5" style="width:100%;box-sizing:border-box;background:rgba(9,11,22,0.7);border:1px solid rgba(51,65,85,0.35);color:#e2e8f0;border-radius:7px;padding:6px 8px;font-size:11px;font-family:inherit;resize:vertical;outline:none;" placeholder="Введите текст шаблона..."></textarea></div>
+      <div style="display:flex;gap:7px;justify-content:flex-end">
+        <button id="new-tpl-cancel" style="padding:6px 13px;background:rgba(51,65,85,0.35);border:1px solid rgba(51,65,85,0.5);color:#64748b;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit;">Отмена</button>
+        <button id="new-tpl-save" style="padding:6px 13px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.35);color:#a5b4fc;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">Добавить</button>
       </div>
     `;
     dlg.appendChild(inner);
@@ -980,13 +1112,13 @@ function openTemplateEditor() {
 
   // Кнопка добавить новую группу
   const addGroupRow = document.createElement("div");
-  addGroupRow.style.cssText = "display:flex;gap:8px;margin-top:8px;flex-shrink:0;padding-top:8px;border-top:1px solid rgba(99,102,241,0.12);";
-  addGroupRow.innerHTML = '<input id="dist-new-group-name" placeholder="Название новой группы..." style="flex:1;background:rgba(15,23,42,0.8);border:1px solid rgba(51,65,85,0.4);color:#e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;outline:none;font-family:Inter,sans-serif;" /><button id="dist-add-group-btn" style="padding:6px 12px;background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);color:#6ee7b7;border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;font-family:Inter,sans-serif;white-space:nowrap;">+ Группа</button>';
+  addGroupRow.style.cssText = "display:flex;gap:7px;margin-top:8px;flex-shrink:0;padding-top:8px;border-top:1px solid rgba(99,102,241,0.1);";
+  addGroupRow.innerHTML = '<input id="dist-new-group-name" placeholder="Название новой группы..." style="flex:1;background:rgba(15,23,42,0.7);border:1px solid rgba(51,65,85,0.35);color:#e2e8f0;border-radius:7px;padding:6px 10px;font-size:12px;outline:none;font-family:inherit;" /><button id="dist-add-group-btn" style="padding:6px 11px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);color:#6ee7b7;border-radius:7px;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;white-space:nowrap;">+ Группа</button>';
   box.appendChild(addGroupRow);
 
   const footer = document.createElement("div");
-  footer.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:8px;flex-shrink:0;";
-  footer.innerHTML = '<button id="dist-tpl-cancel" style="padding:6px 16px;background:rgba(51,65,85,0.4);border:1px solid rgba(51,65,85,0.6);color:#94a3b8;border-radius:9px;cursor:pointer;font-size:12px;font-family:Inter,sans-serif;">Отмена</button><button id="dist-tpl-save" style="padding:6px 16px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;border-radius:9px;cursor:pointer;font-size:12px;font-weight:600;font-family:Inter,sans-serif;">Сохранить</button>';
+  footer.style.cssText = "display:flex;gap:7px;justify-content:flex-end;margin-top:8px;flex-shrink:0;";
+  footer.innerHTML = '<button id="dist-tpl-cancel" style="padding:6px 14px;background:rgba(51,65,85,0.35);border:1px solid rgba(51,65,85,0.5);color:#64748b;border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;">Отмена</button><button id="dist-tpl-save" style="padding:6px 14px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.35);color:#a5b4fc;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">Сохранить</button>';
   box.appendChild(footer);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -1008,20 +1140,38 @@ function openTemplateEditor() {
   overlay.addEventListener("click", e => { if (e.target === overlay) close(); });
 
   footer.querySelector("#dist-tpl-save").onclick = async () => {
+    const saveBtn = footer.querySelector("#dist-tpl-save");
+    saveBtn.textContent = "Сохранение...";
+    saveBtn.disabled = true;
+
     scrollArea.querySelectorAll("[data-tpl-key]").forEach(ta => {
-      const k = ta.dataset.tplKey; const val = ta.value.trim();
-      const def = getTemplateItem(k)?.text || DEFAULT_TEMPLATES[k] || "";
-      if (val === def) delete customTemplates[k]; else customTemplates[k] = val;
-      
+      const k = ta.dataset.tplKey;
+      const val = ta.value;  // не trim — пользователь может намеренно ставить пробелы/переносы
+      // Сравниваем с дефолтом (только встроенные DEFAULT_TEMPLATES — кастомные всегда хранятся)
+      const builtinDef = DEFAULT_TEMPLATES[k];
+      if (builtinDef !== undefined && val === builtinDef) {
+        delete customTemplates[k];
+      } else {
+        customTemplates[k] = val;
+      }
+
       // Также обновляем текст в самих объектах customGroups для консистентности
       customGroups.forEach(g => {
         const it = g.items.find(i => i.key === k);
         if (it) it.text = val;
       });
     });
-    saveCustomGroups(); // Это также вызовет saveCustomTemplates
-    close(); 
-    showMiniStatus("Шаблоны сохранены");
+
+    // Дожидаемся реальной записи в chrome.storage и localStorage
+    try {
+      localStorage.setItem(CUSTOM_GROUPS_KEY, JSON.stringify(customGroups));
+    } catch(_) {}
+    try {
+      await saveCustomTemplates();
+    } catch(_) {}
+
+    close();
+    showMiniStatus("✅ Шаблоны сохранены");
   };
 }
 window.openTemplateEditor = openTemplateEditor;
@@ -1165,24 +1315,24 @@ async function openTemplateList() {
 
   const overlay = document.createElement("div");
   overlay.id = "dist-tpl-list";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999999;display:flex;align-items:flex-end;justify-content:center;padding-bottom:80px;";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999999;display:flex;align-items:flex-end;justify-content:center;padding-bottom:72px;";
 
   const box = document.createElement("div");
-  box.style.cssText = "background:rgba(8,12,24,0.97);backdrop-filter:blur(20px);border:1px solid rgba(99,102,241,0.22);border-radius:18px;width:min(96vw,680px);max-height:80vh;display:flex;flex-direction:column;font-family:Inter,sans-serif;color:#e2e8f0;box-shadow:0 24px 60px rgba(0,0,0,0.7);overflow:hidden;";
+  box.style.cssText = "background:rgba(9,11,22,0.97);backdrop-filter:blur(20px);border:1px solid rgba(99,102,241,0.2);border-radius:16px;width:min(96vw,640px);max-height:78vh;display:flex;flex-direction:column;font-family:'Inter',system-ui,sans-serif;color:#e2e8f0;box-shadow:0 24px 60px rgba(0,0,0,0.7);overflow:hidden;";
 
   const header = document.createElement("div");
-  header.style.cssText = "display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid rgba(99,102,241,0.15);flex-shrink:0;";
-  header.innerHTML = `<div style="width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);box-shadow:0 0 8px rgba(99,102,241,0.6);flex-shrink:0"></div><span style="font-size:13px;font-weight:700;color:#e2e8f0;flex:1">Шаблоны</span><input id="dist-tpl-search" placeholder="🔍 Поиск..." style="flex:1;background:rgba(15,23,42,0.8);border:1px solid rgba(99,102,241,0.25);color:#e2e8f0;border-radius:9px;padding:5px 10px;font-size:12px;outline:none;font-family:Inter,sans-serif;" /><div id="dist-tpl-sort-toggle" title="Режим сортировки" style="cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(51,65,85,0.4);border:1px solid rgba(51,65,85,0.5);font-size:14px;transition:.15s;flex-shrink:0">↕</div><div id="dist-tpl-add-btn" title="Добавить шаблон" style="cursor:pointer;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;font-size:16px;flex-shrink:0;transition:.15s">+</div><div id="dist-tpl-list-close" style="cursor:pointer;color:#475569;font-size:18px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(51,65,85,0.4);flex-shrink:0;">×</div>`;
+  header.style.cssText = "display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid rgba(99,102,241,0.12);flex-shrink:0;";
+  header.innerHTML = `<div style="width:7px;height:7px;border-radius:50%;background:#6366f1;box-shadow:0 0 6px rgba(99,102,241,0.7);flex-shrink:0"></div><span style="font-size:13px;font-weight:700;color:#e2e8f0;flex:1">Шаблоны</span><input id="dist-tpl-search" placeholder="🔍 Поиск..." style="flex:1;background:rgba(15,23,42,0.7);border:1px solid rgba(99,102,241,0.2);color:#e2e8f0;border-radius:8px;padding:5px 10px;font-size:12px;outline:none;font-family:inherit;" /><div id="dist-tpl-sort-toggle" title="Режим сортировки" style="cursor:pointer;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(51,65,85,0.35);border:1px solid rgba(51,65,85,0.5);font-size:13px;transition:.15s;flex-shrink:0">↕</div><div id="dist-tpl-add-btn" title="Добавить шаблон" style="cursor:pointer;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.35);color:#a5b4fc;font-size:16px;flex-shrink:0;transition:.15s">+</div><div id="dist-tpl-list-close" style="cursor:pointer;color:#475569;font-size:17px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:7px;background:rgba(51,65,85,0.35);flex-shrink:0;">×</div>`;
 
   const list = document.createElement("div");
-  list.style.cssText = "overflow-y:auto;padding:8px;flex:1;";
+  list.style.cssText = "overflow-y:auto;padding:7px;flex:1;";
 
   let sortMode = false;
   let dragItem = null, dragType = null, dragGroup = null;
 
   function appendRow(item, grpName) {
     const row = document.createElement("div");
-    row.style.cssText = "padding:8px 10px;border-radius:10px;cursor:pointer;border:1px solid transparent;margin-bottom:3px;font-size:12px;color:#cbd5e1;transition:all .13s ease;display:flex;align-items:center;gap:8px;";
+    row.style.cssText = "padding:7px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:2px;font-size:12px;color:#94a3b8;transition:background .13s,border-color .13s,color .13s;display:flex;align-items:center;gap:7px;";
     row.dataset.label = item.label;
     row.dataset.group = grpName;
 
@@ -1211,8 +1361,8 @@ async function openTemplateList() {
       ins.style.cssText = "font-size:10px;color:#334155";
       ins.textContent = "вставить";
       row.appendChild(ins);
-      row.addEventListener("mouseenter", () => { row.style.background="rgba(99,102,241,0.1)"; row.style.borderColor="rgba(99,102,241,0.25)"; row.style.color="#e2e8f0"; });
-      row.addEventListener("mouseleave", () => { row.style.background=""; row.style.borderColor="transparent"; row.style.color="#cbd5e1"; });
+      row.addEventListener("mouseenter", () => { row.style.background="rgba(99,102,241,0.08)"; row.style.borderColor="rgba(99,102,241,0.2)"; row.style.color="#c7d2fe"; });
+      row.addEventListener("mouseleave", () => { row.style.background=""; row.style.borderColor="transparent"; row.style.color="#94a3b8"; });
       row.onclick = async () => {
         overlay.remove();
         await insertWithCodeCheck(getTemplate(item.key), item.type, item.key);
@@ -1247,7 +1397,7 @@ async function openTemplateList() {
       gWrap.style.cssText = "margin-bottom:2px;";
 
       const gEl = document.createElement("div");
-      gEl.style.cssText = "font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#475569;padding:6px 6px 3px;display:flex;align-items:center;gap:6px;";
+      gEl.style.cssText = "font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#475569;padding:5px 6px 3px;display:flex;align-items:center;gap:5px;";
 
       if (sortMode) {
         const gh = document.createElement("span");
@@ -1369,10 +1519,10 @@ function createTemplateButton(id, text, title, onClick) {
   const btn = document.createElement("button");
   btn.type = "button"; btn.id = id; btn.textContent = text; btn.title = title;
   btn.setAttribute("aria-label", title);
-  btn.style.cssText = `height:32px;min-width:32px;border:1px solid rgba(99,102,241,0.15);outline:none;background:rgba(8,12,24,0.7);color:#e2e8f0;display:inline-flex;align-items:center;justify-content:center;border-radius:9px;cursor:pointer;font-size:15px;line-height:1;flex:0 0 auto;margin:0;padding:0 7px;transition:all .14s ease;backdrop-filter:blur(4px);`;
-  btn.addEventListener("mouseenter", () => { btn.style.background="rgba(99,102,241,0.18)"; btn.style.borderColor="rgba(99,102,241,0.5)"; btn.style.boxShadow="0 0 10px rgba(99,102,241,0.2)"; btn.style.transform="translateY(-1px)"; });
-  btn.addEventListener("mouseleave", () => { btn.style.background="rgba(8,12,24,0.7)"; btn.style.borderColor="rgba(99,102,241,0.15)"; btn.style.boxShadow="none"; btn.style.transform="scale(1)"; });
-  btn.addEventListener("mousedown", () => { btn.style.transform="scale(0.9)"; });
+  btn.style.cssText = `height:30px;min-width:30px;border:1px solid rgba(99,102,241,0.2);outline:none;background:rgba(9,11,22,0.85);color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;flex:0 0 auto;margin:0;padding:0 7px;transition:background .15s,border-color .15s,color .15s,transform .12s;backdrop-filter:blur(8px);`;
+  btn.addEventListener("mouseenter", () => { btn.style.background="rgba(99,102,241,0.15)"; btn.style.borderColor="rgba(99,102,241,0.45)"; btn.style.color="#a5b4fc"; btn.style.transform="translateY(-1px)"; });
+  btn.addEventListener("mouseleave", () => { btn.style.background="rgba(9,11,22,0.85)"; btn.style.borderColor="rgba(99,102,241,0.2)"; btn.style.color="#94a3b8"; btn.style.transform=""; });
+  btn.addEventListener("mousedown", () => { btn.style.transform="scale(0.92)"; });
   btn.addEventListener("mouseup", () => { btn.style.transform="translateY(-1px)"; });
   btn.addEventListener("click", onClick);
   return btn;
@@ -1440,7 +1590,7 @@ function mountGreetingButton() {
 
   const toolbar = document.createElement("div");
   toolbar.id = "dist-chat-template-bar";
-  toolbar.style.cssText = `display:inline-flex;align-items:center;gap:3px;padding:4px 6px;border-radius:12px;background:rgba(8,12,24,0.82);border:1px solid rgba(99,102,241,0.18);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 2px 12px rgba(0,0,0,0.35),0 0 0 1px rgba(255,255,255,0.03) inset;`;
+  toolbar.style.cssText = `display:inline-flex;align-items:center;gap:3px;padding:3px 5px;border-radius:10px;background:rgba(9,11,22,0.88);border:1px solid rgba(99,102,241,0.2);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 2px 10px rgba(0,0,0,0.3);`;
 
   toolbar.appendChild(createTemplateButton("dist-chat-list-btn", "📋", "Шаблоны", () => openTemplateList()));
   toolbar.appendChild(createTemplateButton("dist-chat-edit-btn", "✏️", "Редактировать шаблоны", () => openTemplateEditor()));
@@ -1449,7 +1599,7 @@ function mountGreetingButton() {
 
   const miniStatus = document.createElement("div");
   miniStatus.id = "dist-chat-mini-status";
-  miniStatus.style.cssText = `min-height:13px;font-size:10px;font-weight:500;font-family:Inter,sans-serif;color:#a5b4fc;opacity:0;transition:opacity .18s ease;padding-left:6px;letter-spacing:.2px;user-select:none;pointer-events:none;`;
+  miniStatus.style.cssText = `min-height:12px;font-size:10px;font-weight:500;font-family:'Inter',system-ui,sans-serif;color:#818cf8;opacity:0;transition:opacity .18s ease;padding-left:5px;letter-spacing:.1px;user-select:none;pointer-events:none;`;
 
   toolbarWrap.appendChild(toolbar);
   toolbarWrap.appendChild(miniStatus);
@@ -1485,6 +1635,7 @@ async function startGreetingFeature() {
   }
 
   // Периодическая проверка (для SPA переходов между чатами)
+  // 🔑 ОПТИМИЗАЦИЯ: увеличен интервал до 5с — MutationObserver покрывает мгновенные изменения
   setInterval(() => {
     if (location.href.includes('/deal/')) {
       const existing = document.querySelector("#dist-chat-template-wrap");
@@ -1494,7 +1645,7 @@ async function startGreetingFeature() {
       mountGreetingButton();
       autoInsertGreeting();
     }
-  }, 2000);
+  }, 5000);
 
   startOptimizedObserver();
 }

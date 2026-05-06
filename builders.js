@@ -5,8 +5,8 @@
 function applyUCFilter() {
   const res = [];
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
-    if (activeUCSubs.has("all")) {
+    const t = getDealText(c);
+    if (activeUCSubs.has("all") || activeUCSubs.size === 0) {
       if (t.includes("uc") || t.includes("elite pass") || t.includes("элит пасс")) return res.push(c);
       return;
     }
@@ -27,7 +27,7 @@ function applyRobloxPromoFilter() {
   const hasPremium = activeRobloxPromoSubs.has("premium");
 
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
 
     // 🟣 PREMIUM — приоритетный режим
     if (hasPremium) {
@@ -40,8 +40,8 @@ function applyRobloxPromoFilter() {
     // 🎟 обычные промокоды
     if (!t.includes("робуксов промокодом")) return;
 
-    // "all" работает ТОЛЬКО если premium НЕ выбран
-    if (activeRobloxPromoSubs.has("all")) {
+    // "all" работает ТОЛЬКО если premium НЕ выбран. Или если вообще ничего не выбрано
+    if (activeRobloxPromoSubs.has("all") || activeRobloxPromoSubs.size === 0) {
       res.push(c);
       return;
     }
@@ -72,9 +72,8 @@ function applyGiftCardFilter() {
   const res = [];
 
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
-
-    if (activeGiftCardSubs.has("all")) {
+    const t = getDealText(c);
+    if (activeGiftCardSubs.has("all") || activeGiftCardSubs.size === 0) {
       if (isGiftCardDealText(t)) {
         res.push(c);
         return;
@@ -114,6 +113,17 @@ function addTelegram(parent) {
   const container = document.createElement("div");
   container.style.display = "none";
 
+  if (activeCategories.has("telegram")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.telegram.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.telegram.color}`;
+    container.style.display = "block";
+  }
+  btn.onclick = () => {
+    if (toggleSingleCategory("telegram", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
+  };
+
   // --- Звёзды ---
   const starsLabel = document.createElement("div");
   starsLabel.className = "sub-label";
@@ -121,6 +131,7 @@ function addTelegram(parent) {
 
   const starsAllBtn = document.createElement("div");
   starsAllBtn.className = "sub-all";
+  if (activeStarSubs.has("all")) starsAllBtn.classList.add("active");
   starsAllBtn.textContent = "Все звёзды";
 
   const starsGrid = document.createElement("div");
@@ -132,6 +143,7 @@ function addTelegram(parent) {
     activeStarSubs.clear();
     activeStarSubs.add("all");
     highlightAllButton(starsAllBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -161,6 +173,7 @@ function addTelegram(parent) {
     };
     b.appendChild(star);
 
+    if (activeStarSubs.has(v)) b.classList.add("active");
     b.onclick = () => {
       if (!activeCategories.has("telegram")) return;
       activeTelegramSubs.clear();
@@ -173,6 +186,7 @@ function addTelegram(parent) {
         b.classList.add("active");
       }
       container.querySelectorAll(".sub-all").forEach(a => a.classList.remove("active"));
+      saveActiveState();
       updateMergedDeals();
     };
     
@@ -190,6 +204,7 @@ function addTelegram(parent) {
 
   const premAllBtn = document.createElement("div");
   premAllBtn.className = "sub-all";
+  if (activeTelegramSubs.has("all")) premAllBtn.classList.add("active");
   premAllBtn.textContent = "Все подписки";
 
   const premGrid = document.createElement("div");
@@ -201,6 +216,7 @@ function addTelegram(parent) {
     activeTelegramSubs.clear();
     activeTelegramSubs.add("all");
     highlightAllButton(premAllBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -230,6 +246,7 @@ function addTelegram(parent) {
     };
     b.appendChild(star);
 
+    if (activeTelegramSubs.has(v)) b.classList.add("active");
     b.onclick = () => {
       if (!activeCategories.has("telegram")) return;
       activeStarSubs.clear();
@@ -242,6 +259,7 @@ function addTelegram(parent) {
         b.classList.add("active");
       }
       container.querySelectorAll(".sub-all").forEach(a => a.classList.remove("active"));
+      saveActiveState();
       updateMergedDeals();
     };
     
@@ -266,23 +284,6 @@ function addTelegram(parent) {
   container.appendChild(premLabel);
   container.appendChild(premGrid);
 
-  btn.onclick = () => {
-    if (activeCategories.has("telegram")) {
-      activeCategories.delete("telegram");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("telegram");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.telegram.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.telegram.color}`;
-    }
-    updateMergedDeals();
-  };
-
   parent.appendChild(btn);
   parent.appendChild(container);
   telegramContainer = container;
@@ -295,7 +296,7 @@ function applyTelegramUnifiedFilter() {
   const isPremMode = activeTelegramSubs.size > 0;
 
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
     if (isStarMode) {
       if (!t.includes("зв")) return;
       if (activeStarSubs.has("all")) { res.push(c); return; }
@@ -310,6 +311,11 @@ function applyTelegramUnifiedFilter() {
       for (const m of activeTelegramSubs) {
         if (matchTelegramPremiumMonth(t, m)) { res.push(c); return; }
       }
+      return;
+    }
+    // Fallback: если выбрана категория Telegram, но не выбраны подкатегории
+    if (t.includes("telegram") || t.includes("премиум") || t.includes("зв")) {
+      res.push(c);
     }
   });
   return res;
@@ -338,9 +344,9 @@ const PUBG_LABELS = {
 function applyPubgFilter() {
   const res = [];
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
     if (!t.includes("pubg") && !t.includes("пабг") && !t.includes("pubg mobile")) return;
-    if (activePubgSubs.has("all")) { res.push(c); return; }
+    if (activePubgSubs.has("all") || activePubgSubs.size === 0) { res.push(c); return; }
     for (const v of activePubgSubs) {
       if (v === "all") continue;
       if (v === "elite" && (t.includes("elite pass") || t.includes("элит пасс") || t.includes("элитпасс"))) { res.push(c); return; }
@@ -359,8 +365,16 @@ function addPubg(parent) {
   const container = document.createElement("div");
   container.style.display = "none";
 
+  if (activeCategories.has("pubg")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.pubg.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.pubg.color}`;
+    container.style.display = "block";
+  }
+  
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activePubgSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все";
 
   const grid = document.createElement("div");
@@ -370,11 +384,13 @@ function addPubg(parent) {
     if (!activeCategories.has("pubg")) return;
     if (activePubgSubs.has("all")) {
       resetVisualSelection(container, activePubgSubs);
+      saveActiveState();
       return;
     }
     activePubgSubs.clear();
     activePubgSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -386,20 +402,8 @@ function addPubg(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("pubg")) {
-      activeCategories.delete("pubg");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("pubg");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.pubg.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.pubg.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("pubg", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -415,8 +419,16 @@ function addRobloxPromo(parent) {
   const container = document.createElement("div");
   container.style.display = "none";
 
+  if (activeCategories.has("robloxpromo")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.robloxpromo.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.robloxpromo.color}`;
+    container.style.display = "block";
+  }
+
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activeRobloxPromoSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все номиналы";
 
   const grid = document.createElement("div");
@@ -433,11 +445,13 @@ function addRobloxPromo(parent) {
     if (!activeCategories.has("robloxpromo")) return;
     if (activeRobloxPromoSubs.has("all")) {
       resetVisualSelection(container, activeRobloxPromoSubs);
+      saveActiveState();
       return;
     }
     activeRobloxPromoSubs.clear();
     activeRobloxPromoSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -452,9 +466,6 @@ function addRobloxPromo(parent) {
     )
   );
 
-
-
-
   ROBLOX_PROMO_BRL.forEach(v =>
     addGridBtn(brlGrid, activeRobloxPromoSubs, `${v}`, v, () => updateMergedDeals(), container)
   );
@@ -465,20 +476,8 @@ function addRobloxPromo(parent) {
   container.appendChild(brlGrid);
 
   btn.onclick = () => {
-    if (activeCategories.has("robloxpromo")) {
-      activeCategories.delete("robloxpromo");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("robloxpromo");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.robloxpromo.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.robloxpromo.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("robloxpromo", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -490,9 +489,14 @@ function applyRobloxFilter() {
   const res = [];
   const isGamepass = activeRobloxSubs.has("gamepass");
   const hasPremium = activeRobloxSubs.has("premium");
+  const isLinkAll = activeRobloxSubs.has("link-all");
+  const linkValues = [...activeRobloxSubs]
+    .filter(v => typeof v === "string" && v.startsWith("link-") && v !== "link-all")
+    .map(v => Number(v.slice(5)))
+    .filter(n => Number.isFinite(n));
 
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
     if (isGamepass) {
       if (t.includes("геймпас") || t.includes("game pass")) res.push(c);
       return;
@@ -501,10 +505,23 @@ function applyRobloxFilter() {
       if (t.includes("роблокс премиум")) res.push(c);
       return;
     }
-    if (!t.includes("робуксов промокодом") && !t.includes("роблокс премиум")) return;
-    if (activeRobloxSubs.has("all")) { res.push(c); return; }
+    // По ссылке — все номиналы
+    if (isLinkAll) {
+      if (t.includes("по ссылке") && (t.includes("робукс") || t.includes("robux"))) res.push(c);
+      return;
+    }
+    // По ссылке — конкретные номиналы
+    if (linkValues.length) {
+      if (t.includes("по ссылке") && linkValues.some(n => matchRobloxLink(t, n))) res.push(c);
+      return;
+    }
+
+    const hasRobuxByLink = (t.includes("робукс") || t.includes("robux")) && t.includes("по ссылке");
+    if (!t.includes("робуксов промокодом") && !t.includes("роблокс премиум") && !t.includes("геймпас") && !t.includes("game pass") && !hasRobuxByLink) return;
+    if (activeRobloxSubs.has("all") || activeRobloxSubs.size === 0) { res.push(c); return; }
     for (const v of activeRobloxSubs) {
       if (v === "all" || v === "gamepass" || v === "premium") continue;
+      if (typeof v === "string" && v.startsWith("link-")) continue;
       if (matchRobloxPromo(t, v)) { res.push(c); return; }
     }
   });
@@ -519,6 +536,13 @@ function addRoblox(parent) {
   const container = document.createElement("div");
   container.style.display = "none";
 
+  if (activeCategories.has("roblox")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.roblox.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.roblox.color}`;
+    container.style.display = "block";
+  }
+
   // --- Промокоды ---
   const promoLabel = document.createElement("div");
   promoLabel.className = "sub-label";
@@ -526,6 +550,7 @@ function addRoblox(parent) {
 
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activeRobloxSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все номиналы";
 
   const grid = document.createElement("div");
@@ -542,11 +567,13 @@ function addRoblox(parent) {
     if (!activeCategories.has("roblox")) return;
     if (activeRobloxSubs.has("all")) {
       resetVisualSelection(container, activeRobloxSubs);
+      saveActiveState();
       return;
     }
     activeRobloxSubs.clear();
     activeRobloxSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -565,6 +592,66 @@ function addRoblox(parent) {
     addGridBtn(brlGrid, activeRobloxSubs, `${v}`, v, () => updateMergedDeals(), container)
   );
 
+  // --- По ссылке ---
+  const linkLabel = document.createElement("div");
+  linkLabel.className = "sub-label";
+  linkLabel.textContent = "🔗 По ссылке";
+
+  const linkAllBtn = document.createElement("div");
+  linkAllBtn.className = "sub-all";
+  if (activeRobloxSubs.has("link-all")) linkAllBtn.classList.add("active");
+  linkAllBtn.textContent = "Все по ссылке";
+
+  const linkGrid = document.createElement("div");
+  linkGrid.className = "sub-grid";
+
+  linkAllBtn.onclick = () => {
+    if (!activeCategories.has("roblox")) return;
+    if (activeRobloxSubs.has("link-all")) {
+      activeRobloxSubs.delete("link-all");
+      linkAllBtn.classList.remove("active");
+      saveActiveState();
+      updateMergedDeals();
+      return;
+    }
+    activeRobloxSubs.clear();
+    activeRobloxSubs.add("link-all");
+    container.querySelectorAll(".sub-all,.sub-btn").forEach(b => b.classList.remove("active"));
+    linkAllBtn.classList.add("active");
+    saveActiveState();
+    updateMergedDeals();
+  };
+
+  ROBLOX_LINK_VALUES.forEach(v => {
+    const key = `link-${v}`;
+    const b = document.createElement("div");
+    b.className = "sub-btn";
+    if (activeRobloxSubs.has(key)) b.classList.add("active");
+    b.textContent = `${v}`;
+    b.onclick = () => {
+      if (activeRobloxSubs.has(key)) {
+        activeRobloxSubs.delete(key);
+        b.classList.remove("active");
+      } else {
+        activeRobloxSubs.add(key);
+        b.classList.add("active");
+        // Снимаем все "all"-режимы и promo-номиналы — выбран конкретный link-номинал
+        activeRobloxSubs.delete("all");
+        activeRobloxSubs.delete("link-all");
+        ROBLOX_PROMO_VALUES.forEach(pv => activeRobloxSubs.delete(pv));
+        ROBLOX_PROMO_BRL.forEach(pv => activeRobloxSubs.delete(pv));
+        container.querySelectorAll(".sub-all").forEach(a => a.classList.remove("active"));
+        // Снимаем визуально и promo-номиналы
+        container.querySelectorAll(".sub-btn").forEach(sb => {
+          if (sb !== b && !sb.textContent.match(new RegExp(`^${ROBLOX_LINK_VALUES.join("|")}$`))) sb.classList.remove("active");
+        });
+      }
+      saveActiveState();
+      updateMergedDeals();
+    };
+    linkGrid.appendChild(b);
+  });
+
   // --- Геймпас ---
   const gamepassLabel = document.createElement("div");
   gamepassLabel.className = "sub-label";
@@ -572,6 +659,7 @@ function addRoblox(parent) {
 
   const gamepassBtn = document.createElement("div");
   gamepassBtn.className = "sub-all";
+  if (activeRobloxSubs.has("gamepass")) gamepassBtn.classList.add("active");
   gamepassBtn.textContent = "Геймпас";
 
   gamepassBtn.onclick = () => {
@@ -579,6 +667,7 @@ function addRoblox(parent) {
     activeRobloxSubs.clear();
     activeRobloxSubs.add("gamepass");
     highlightAllButton(gamepassBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
   gamepassBtn.id = "roblox-gamepass-btn";
@@ -588,24 +677,15 @@ function addRoblox(parent) {
   container.appendChild(grid);
   container.appendChild(brlLabel);
   container.appendChild(brlGrid);
+  container.appendChild(linkLabel);
+  container.appendChild(linkAllBtn);
+  container.appendChild(linkGrid);
   container.appendChild(gamepassLabel);
   container.appendChild(gamepassBtn);
 
   btn.onclick = () => {
-    if (activeCategories.has("roblox")) {
-      activeCategories.delete("roblox");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("roblox");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.roblox.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.roblox.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("roblox", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -616,9 +696,9 @@ function addRoblox(parent) {
 function applyArenaFilter() {
   const res = [];
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
     if (!t.includes("arena") && !t.includes("арена") && !t.includes("bonds")) return;
-    if (activeArenaSubs.has("all")) { res.push(c); return; }
+    if (activeArenaSubs.has("all") || activeArenaSubs.size === 0) { res.push(c); return; }
     for (const v of activeArenaSubs) {
       if (matchArena(t, v)) { res.push(c); return; }
     }
@@ -633,10 +713,18 @@ function addArena(parent) {
 
   const container = document.createElement("div");
   container.style.display = "none";
+  if (activeCategories.has("arena")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.arena.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.arena.color}`;
+    container.style.display = "block";
+  }
+
   const allBtn = document.createElement("div");
   const grid = document.createElement("div");
 
   allBtn.className = "sub-all";
+  if (activeArenaSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все облигации";
   grid.className = "sub-grid";
 
@@ -644,11 +732,13 @@ function addArena(parent) {
     if (!activeCategories.has("arena")) return;
     if (activeArenaSubs.has("all")) {
       resetVisualSelection(container, activeArenaSubs);
+      saveActiveState();
       return;
     }
     activeArenaSubs.clear();
     activeArenaSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -660,20 +750,8 @@ function addArena(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("arena")) {
-      activeCategories.delete("arena");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("arena");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.arena.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.arena.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("arena", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -699,13 +777,15 @@ function addGiftCard(parent) {
 function applyDonateFilter() {
   const res = [];
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
     if (GIFTARY_ALL_KEYWORDS.some(k => t.includes(k))) return;
     if (t.includes("mlbb") || t.includes("алмазный пропуск") || t.includes("алмазы")) return;
     if (/(^|\s)(uc|уc)(\s|$)/i.test(t)) return;
     if (t.includes("elite pass") || t.includes("элит пасс") || t.includes("elite")) return;
     if (t.includes("bonds") || t.includes("arena")) return;
     if (t.includes("g-coin") || t.includes("gcoin") || t.includes("pubg")) return;
+    // Исключаем сделки "со входом в аккаунт" — они принадлежат категории Account
+    if (t.includes("со входом в аккаунт") || t.includes("с входом в аккаунт")) return;
     const hasId = t.includes("по айди") || / id(\s|$|[^a-z])/i.test(t);
     const isSpecificGame = activeDonateSubs.size > 0 && !activeDonateSubs.has("all");
     if (isSpecificGame) {
@@ -732,9 +812,16 @@ function addDonate(parent) {
 
   const container = document.createElement("div");
   container.style.display = "none";
+  if (activeCategories.has("donate")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.donate.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.donate.color}`;
+    container.style.display = "block";
+  }
 
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activeDonateSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все игры";
 
   const grid = document.createElement("div");
@@ -744,11 +831,13 @@ function addDonate(parent) {
     if (!activeCategories.has("donate")) return;
     if (activeDonateSubs.has("all")) {
       resetVisualSelection(container, activeDonateSubs);
+      saveActiveState();
       return;
     }
     activeDonateSubs.clear();
     activeDonateSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -760,20 +849,8 @@ function addDonate(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("donate")) {
-      activeCategories.delete("donate");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("donate");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.donate.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.donate.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("donate", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -785,15 +862,12 @@ function applyGiftaryFilter() {
   const res = [];
 
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
 
-    if (activeGiftarySubs.has("all")) {
+    if (activeGiftarySubs.has("all") || activeGiftarySubs.size === 0) {
       for (const game of GIFTARY_VALUES) {
         const keywords = GIFTARY_KEYWORDS[game.value];
-        if (keywords.some(k => {
-          if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-          return t.includes(k);
-        })) {
+        if (keywords.some(k => testKeywordWithBoundary(k, t))) {
           res.push(c);
           return;
         }
@@ -803,10 +877,7 @@ function applyGiftaryFilter() {
 
     for (const selectedGame of activeGiftarySubs) {
       const keywords = GIFTARY_KEYWORDS[selectedGame];
-      if (keywords && keywords.some(k => {
-        if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-        return t.includes(k);
-      })) {
+      if (keywords && keywords.some(k => testKeywordWithBoundary(k, t))) {
         res.push(c);
         return;
       }
@@ -819,23 +890,20 @@ function applyGiftaryFilter() {
 function applyDessluHubFilter() {
   const res = [];
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
-    if (activeDessluHubSubs.has("all")) {
+    const t = getDealText(c);
+    if (activeDessluHubSubs.has("all") || activeDessluHubSubs.size === 0) {
       for (const game of DESSLUHUB_VALUES) {
         const keywords = DESSLUHUB_KEYWORDS[game.value];
-        if (keywords.some(k => {
-          if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-          return t.includes(k);
-        })) { res.push(c); return; }
+        if (keywords.some(k => testKeywordWithBoundary(k, t))) { res.push(c); return; }
       }
       return;
     }
     for (const selectedGame of activeDessluHubSubs) {
       const keywords = DESSLUHUB_KEYWORDS[selectedGame];
-      if (keywords && keywords.some(k => {
-        if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-        return t.includes(k);
-      })) { res.push(c); return; }
+      if (keywords && keywords.some(k => testKeywordWithBoundary(k, t))) {
+        res.push(c);
+        return;
+      }
     }
   });
   return res;
@@ -847,10 +915,16 @@ function addDessluHub(parent) {
   btn.textContent = `${CATEGORIES.dessluhub.emoji} ${CATEGORIES.dessluhub.title}`;
 
   const container = document.createElement("div");
-  container.style.display = "none";
+  container.style.display = activeCategories.has("dessluhub") ? "block" : "none";
+  if (activeCategories.has("dessluhub")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.dessluhub.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.dessluhub.color}`;
+  }
 
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activeDessluHubSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все игры";
 
   const grid = document.createElement("div");
@@ -860,11 +934,13 @@ function addDessluHub(parent) {
     if (!activeCategories.has("dessluhub")) return;
     if (activeDessluHubSubs.has("all")) {
       resetVisualSelection(container, activeDessluHubSubs);
+      saveActiveState();
       return;
     }
     activeDessluHubSubs.clear();
     activeDessluHubSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -876,20 +952,8 @@ function addDessluHub(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("dessluhub")) {
-      activeCategories.delete("dessluhub");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("dessluhub");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.dessluhub.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.dessluhub.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("dessluhub", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -903,10 +967,16 @@ function addGiftary(parent) {
   btn.textContent = `${CATEGORIES.giftary.emoji} ${CATEGORIES.giftary.title}`;
 
   const container = document.createElement("div");
-  container.style.display = "none";
+  container.style.display = activeCategories.has("giftary") ? "block" : "none";
+  if (activeCategories.has("giftary")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.giftary.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.giftary.color}`;
+  }
 
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activeGiftarySubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все игры";
 
   const grid = document.createElement("div");
@@ -916,11 +986,13 @@ function addGiftary(parent) {
     if (!activeCategories.has("giftary")) return;
     if (activeGiftarySubs.has("all")) {
       resetVisualSelection(container, activeGiftarySubs);
+      saveActiveState();
       return;
     }
     activeGiftarySubs.clear();
     activeGiftarySubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -932,20 +1004,8 @@ function addGiftary(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("giftary")) {
-      activeCategories.delete("giftary");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("giftary");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.giftary.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.giftary.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("giftary", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -957,9 +1017,9 @@ function applyNeuralFilter() {
   const res = [];
 
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
+    const t = getDealText(c);
 
-    if (activeNeuralSubs.has("all")) {
+    if (activeNeuralSubs.has("all") || activeNeuralSubs.size === 0) {
       const anyMatch = Object.values(NEURAL_KEYWORDS).some(kws => kws.some(k => t.includes(k)));
       if (anyMatch) res.push(c);
       return;
@@ -980,10 +1040,16 @@ function addNeural(parent) {
   btn.textContent = `${CATEGORIES.neural.emoji} ${CATEGORIES.neural.title}`;
 
   const container = document.createElement("div");
-  container.style.display = "none";
+  container.style.display = activeCategories.has("neural") ? "block" : "none";
+  if (activeCategories.has("neural")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.neural.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.neural.color}`;
+  }
 
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
+  if (activeNeuralSubs.has("all")) allBtn.classList.add("active");
   allBtn.textContent = "Все нейросети";
 
   const grid = document.createElement("div");
@@ -993,11 +1059,13 @@ function addNeural(parent) {
     if (!activeCategories.has("neural")) return;
     if (activeNeuralSubs.has("all")) {
       resetVisualSelection(container, activeNeuralSubs);
+      saveActiveState();
       return;
     }
     activeNeuralSubs.clear();
     activeNeuralSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -1009,20 +1077,8 @@ function addNeural(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("neural")) {
-      activeCategories.delete("neural");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("neural");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.neural.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.neural.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("neural", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -1032,16 +1088,32 @@ function addNeural(parent) {
 
 function applyAccountFilter() {
   const res = [];
+  // Ключевые слова Standoff — исключаем из категории "Вход в аккаунт"
+  const standoffExclude = ["standoff", "стандофф", "dice", "куб", "кубов", "кубы", "fable", "тикет"];
+
   document.querySelectorAll("a[href^='/deal/']").forEach(c => {
-    const t = c.innerText.toLowerCase();
-    if (activeAccountSubs.has("all")) {
-      const anyMatch = Object.values(ACCOUNT_KEYWORDS).some(kws => kws.some(k => t.includes(k)));
-      if (anyMatch) res.push(c);
+    const t = getDealText(c);
+
+    // Не захватываем сделки Standoff в категорию "Вход в аккаунт"
+    if (standoffExclude.some(k => t.includes(k))) return;
+
+    if (activeAccountSubs.has("all") || activeAccountSubs.size === 0) {
+      // Проверяем специфичные ключевые слова каждой игры
+      const gameMatch = Object.values(ACCOUNT_KEYWORDS).some(kws => kws.some(k => t.includes(k)));
+      // Проверяем общие ключевые слова ("со входом в аккаунт" и т.д.)
+      const genericMatch = typeof ACCOUNT_GENERIC_KEYWORDS !== 'undefined' &&
+                           ACCOUNT_GENERIC_KEYWORDS.some(k => t.includes(k));
+      if (gameMatch || genericMatch) res.push(c);
       return;
     }
     for (const sel of activeAccountSubs) {
       const kws = ACCOUNT_KEYWORDS[sel];
       if (kws && kws.some(k => t.includes(k))) { res.push(c); return; }
+    }
+    // Также проверяем общие ключевые слова при выборе конкретной подкатегории
+    if (typeof ACCOUNT_GENERIC_KEYWORDS !== 'undefined' &&
+        ACCOUNT_GENERIC_KEYWORDS.some(k => t.includes(k))) {
+      res.push(c);
     }
   });
   return res;
@@ -1053,21 +1125,33 @@ function addAccount(parent) {
   btn.textContent = `${CATEGORIES.account.emoji} ${CATEGORIES.account.title}`;
 
   const container = document.createElement("div");
-  container.style.display = "none";
+  container.style.display = activeCategories.has("account") ? "block" : "none";
+
+  if (activeCategories.has("account")) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES.account.color}`;
+    btn.style.border = `1px solid ${CATEGORIES.account.color}`;
+  }
 
   const allBtn = document.createElement("div");
   allBtn.className = "sub-all";
-  allBtn.textContent = "Все игры";
+  if (activeAccountSubs.has("all")) allBtn.classList.add("active");
+  allBtn.textContent = "Все аккаунты";
 
   const grid = document.createElement("div");
   grid.className = "sub-grid";
 
   allBtn.onclick = () => {
     if (!activeCategories.has("account")) return;
-    if (activeAccountSubs.has("all")) { resetVisualSelection(container, activeAccountSubs); return; }
+    if (activeAccountSubs.has("all")) {
+      resetVisualSelection(container, activeAccountSubs);
+      saveActiveState();
+      return;
+    }
     activeAccountSubs.clear();
     activeAccountSubs.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -1079,20 +1163,8 @@ function addAccount(parent) {
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has("account")) {
-      activeCategories.delete("account");
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add("account");
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES.account.color}`;
-      btn.style.border = `1px solid ${CATEGORIES.account.color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory("account", btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);
@@ -1103,6 +1175,7 @@ function addAccount(parent) {
 function addGridBtn(parent, stateSet, label, value, applyFn, container) {
   const b = document.createElement("div");
   b.className = "sub-btn";
+  if (stateSet.has(value)) b.classList.add("active");
   b.textContent = label;
   b.onclick = () => {
     if (stateSet.has(value)) {
@@ -1117,6 +1190,7 @@ function addGridBtn(parent, stateSet, label, value, applyFn, container) {
         stateSet.delete("all");
       }
     }
+    saveActiveState();
     applyFn();
   };
   parent.appendChild(b);
@@ -1130,6 +1204,7 @@ function highlightAllButton(allBtn, container) {
 function resetVisualSelection(container, stateSet) {
   container.querySelectorAll(".sub-btn, .sub-all").forEach(b => b.classList.remove("active"));
   stateSet.clear();
+  saveActiveState();
   updateMergedDeals();
 }
 
@@ -1147,15 +1222,25 @@ function buildComplexCategory(parent, key, allLabel, values, stateSet, applyFn, 
   allBtn.textContent = allLabel;
   grid.className = "sub-grid";
 
+  if (activeCategories.has(key)) {
+    btn.classList.add("active");
+    btn.style.boxShadow = `0 0 12px ${CATEGORIES[key].color}`;
+    btn.style.border = `1px solid ${CATEGORIES[key].color}`;
+    container.style.display = "block";
+  }
+  if (stateSet.has("all")) allBtn.classList.add("active");
+
   allBtn.onclick = () => {
     if (!activeCategories.has(key)) return;
     if (stateSet.has("all")) {
       resetVisualSelection(container, stateSet);
+      saveActiveState();
       return;
     }
     stateSet.clear();
     stateSet.add("all");
     highlightAllButton(allBtn, container);
+    saveActiveState();
     updateMergedDeals();
   };
 
@@ -1167,20 +1252,8 @@ function buildComplexCategory(parent, key, allLabel, values, stateSet, applyFn, 
   container.appendChild(grid);
 
   btn.onclick = () => {
-    if (activeCategories.has(key)) {
-      activeCategories.delete(key);
-      container.style.display = "none";
-      btn.classList.remove("active");
-      btn.style.boxShadow = "";
-      btn.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add(key);
-      container.style.display = "block";
-      btn.classList.add("active");
-      btn.style.boxShadow = `0 0 12px ${CATEGORIES[key].color}`;
-      btn.style.border = `1px solid ${CATEGORIES[key].color}`;
-    }
-    updateMergedDeals();
+    if (toggleSingleCategory(key, btn, container)) updateMergedDeals();
+    else updateMergedDeals();
   };
 
   parent.appendChild(btn);

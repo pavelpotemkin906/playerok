@@ -15,6 +15,12 @@ const TG_PREMIUM_VALUES = [3, 6, 12];
 
 const ROBLOX_PROMO_VALUES = [800, 1600, 2000, 4500, 10000];
 const ROBLOX_PROMO_BRL = [340, 550];
+// Roblox робуксы "по ссылке" (зелёные карточки)
+const ROBLOX_LINK_VALUES = [
+  22500, 13000, 10000, 7000, 6000, 5000, 4500, 4000, 3600, 3200,
+  2700, 2400, 2000, 1700, 1600, 1200, 1000, 900, 800, 700,
+  600, 500, 320, 240, 200, 160, 80
+];
 const GIFTARY_VALUES = [
   { value: "likee",           label: "Likee" },
   { value: "watcher",         label: "Watcher of Realms" },
@@ -65,13 +71,19 @@ const DONATE_KEYWORDS = {
   honkaisr:      ["honkai: star rail", "honkai star rail", "stellar jade", "хонкай", "supply pass", "древних снов", "ancient dreams"],
   zzzero:        ["zenless zone zero", "zzz", "polychrome", "поликром", "монохром", "monochrome", "inter-knot membership", "inter knot membership", "интер-кнот", "интер кнот"],
   marvelrivals:  ["marvel rivals", "марвел", "marvel", "rivals", "lattice"],
-  standoff2:     ["standoff 2", "standoff2", "стандофф", "fable", "тикет", "голда", "голды", "голд", "gold standoff", "standoff", "уровень standoff", "gold pass", "пропуск standoff", "уровень по айди", "+1 уровень по айди", "+10 уровней по айди", "gold pass по айди", "gold pass +10 уровней по айди", "+25 уровней по айди", "+75 уровней по айди"],
+  standoff2:     ["standoff 2", "standoff2", "стандофф", "fable", "тикет", "голда", "голды", "голд", "gold standoff", "standoff", "уровень standoff", "gold pass standoff", "gold pass по айди", "пропуск standoff", "уровень по айди", "+1 уровень по айди", "+10 уровней по айди", "gold pass +10 уровней по айди", "+25 уровней по айди", "+75 уровней по айди", "dice", "dice по айди", "куб", "кубов", "кубы", "кубов по айди", "sticker pack", "sticker pack combo", "chameleon", "кейса chameleon", "кейс chameleon"],
   callofduty:    ["call of duty", "cod", "колда", " cp ", "cp по", "warzone", "modern warfare", "black ops", "кодпоинт", "cod points"]
 };
 
 // Все ключевые слова Giftary и DessluHub — для исключения из доната
 const GIFTARY_ALL_KEYWORDS = Object.values(GIFTARY_KEYWORDS).flat();
 const DESSLUHUB_ALL_KEYWORDS = Object.values(DESSLUHUB_KEYWORDS).flat();
+
+const ARENA_VALUES = [
+  { value: "bonds", label: "Bonds" },
+  { value: "breakout", label: "Arena Breakout" },
+  { value: "bp", label: "Боевой пропуск" }
+];
 
 const GIFTCARD_VALUES = [
   "appstore",
@@ -112,6 +124,7 @@ const GIFTCARD_KEYWORDS = {
 
 const NEURAL_VALUES = [
   { value: "chatgpt",    label: "ChatGPT" },
+  { value: "claude",     label: "Claude" },
   { value: "midjourney", label: "Midjourney" },
   { value: "grok",       label: "Grok" },
   { value: "gemini",     label: "Gemini" },
@@ -121,6 +134,7 @@ const NEURAL_VALUES = [
 
 const NEURAL_KEYWORDS = {
   chatgpt:    ["чатгпт", "chatgpt", "chat gpt", "чат гпт", "gpt-4", "gpt4", "openai", "опенаи"],
+  claude:     ["claude", "claude pro", "anthropic", "клод", "клауд", "клауд про", "клоуд", "клоуд про"],
   midjourney: ["midjourney", "midjorney"],
   grok:       ["grok"],
   gemini:     ["gemini"],
@@ -129,12 +143,19 @@ const NEURAL_KEYWORDS = {
 };
 
 const ACCOUNT_VALUES = [
-  { value: "brawlstars", label: "Brawl Stars" }
+  { value: "brawlstars", label: "Brawl Stars" },
+  { value: "clashofclans", label: "Clash of Clans" },
+  { value: "clashroyale", label: "Clash Royale" }
 ];
 
 const ACCOUNT_KEYWORDS = {
-  brawlstars: ["brawl stars", "brawlstars", "брол старс", "со входом в аккаунт", "с входом в аккаунт", "вход в аккаунт"]
+  brawlstars:    ["brawl stars", "brawlstars", "брол старс"],
+  clashofclans:  ["clash of clans", "клеш оф кленс", "клэш оф клэнс"],
+  clashroyale:   ["clash royale", "клеш рояль", "клэш рояль", "diamond pass"]
 };
+
+// Общие ключевые слова для категории "Вход в аккаунт" — срабатывают для ЛЮБОЙ игры
+const ACCOUNT_GENERIC_KEYWORDS = ["со входом в аккаунт", "с входом в аккаунт", "вход в аккаунт"];
 
 const CATEGORIES = {
   stars: { title: "Telegram Звёзды", emoji: "⭐", color: "#ffd700" },
@@ -153,10 +174,7 @@ const CATEGORIES = {
     emoji: "🎁",
     color: "#8b5cf6",
     match: t => {
-      return Object.values(GIFTARY_KEYWORDS).some(kws => kws.some(k => {
-        if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-        return t.includes(k);
-      }));
+      return Object.values(GIFTARY_KEYWORDS).some(kws => kws.some(k => testKeywordWithBoundary(k, t)));
     }
   },
 
@@ -165,10 +183,7 @@ const CATEGORIES = {
     emoji: "🔥",
     color: "#f97316",
     match: t => {
-      return Object.values(DESSLUHUB_KEYWORDS).some(kws => kws.some(k => {
-        if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-        return t.includes(k);
-      }));
+      return Object.values(DESSLUHUB_KEYWORDS).some(kws => kws.some(k => testKeywordWithBoundary(k, t)));
     }
   },
 
@@ -213,16 +228,15 @@ const CATEGORIES = {
     color: "#38bdf8",
     match: t => {
       if (GIFTARY_ALL_KEYWORDS.some(k => t.includes(k))) return false;
-      if (DESSLUHUB_ALL_KEYWORDS.some(k => {
-          if (k.includes("\\b")) return new RegExp(k, "i").test(t);
-          return t.includes(k);
-      })) return false;
+      if (DESSLUHUB_ALL_KEYWORDS.some(k => testKeywordWithBoundary(k, t))) return false;
       if (t.includes("mlbb") || t.includes("алмазный пропуск") || t.includes("алмазы")) return false;
       if (/(^|\s)(uc|уc)(\s|$)/i.test(t)) return false;
       if (t.includes("elite pass") || t.includes("элит пасс") || t.includes("elite")) return false;
       if (t.includes("bonds") || t.includes("arena") || t.includes("breakout") || t.includes("боевой пропуск")) return false;
       if (t.includes("g-coin") || t.includes("gcoin") || t.includes("pubg")) return false;
       if (t.includes("elite pass") || t.includes("элит пасс")) return false;
+      // Исключаем сделки "со входом в аккаунт" — они принадлежат категории Account
+      if (t.includes("со входом в аккаунт") || t.includes("с входом в аккаунт")) return false;
       return t.includes("по айди") || / id(\s|$|[^a-z])/i.test(t);
     }
   },

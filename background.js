@@ -150,6 +150,83 @@ async function processCSVFileWithRetry(filePath) {
   }
 }
 
+const TAB_GROUPS_STORAGE_KEY = "dist_tab_groups_v1";
+const VALID_TAB_GROUP_COLORS = new Set(["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"]);
+
+async function loadTabGroupMap() {
+  const data = await chrome.storage.local.get(TAB_GROUPS_STORAGE_KEY);
+  const map = data?.[TAB_GROUPS_STORAGE_KEY];
+  return map && typeof map === "object" ? map : {};
+}
+
+async function saveTabGroupMap(map) {
+  await chrome.storage.local.set({ [TAB_GROUPS_STORAGE_KEY]: map });
+}
+
+function normalizeTabGroupColor(color) {
+  return VALID_TAB_GROUP_COLORS.has(color) ? color : "grey";
+}
+
+async function resolveExistingGroupId(groupKey, groupTitle, windowId) {
+  const groupMap = await loadTabGroupMap();
+  const groups = await chrome.tabGroups.query(typeof windowId === "number" ? { windowId } : {});
+  const storedGroupId = groupMap[groupKey];
+
+  if (Number.isInteger(storedGroupId) && groups.some(group => group.id === storedGroupId)) {
+    return storedGroupId;
+  }
+
+  const titleMatch = groups.find(group => group.title === groupTitle);
+  if (titleMatch) {
+    groupMap[groupKey] = titleMatch.id;
+    await saveTabGroupMap(groupMap);
+    return titleMatch.id;
+  }
+
+  if (groupKey in groupMap) {
+    delete groupMap[groupKey];
+    await saveTabGroupMap(groupMap);
+  }
+
+  return null;
+}
+
+async function rememberGroupId(groupKey, groupId) {
+  const groupMap = await loadTabGroupMap();
+  groupMap[groupKey] = groupId;
+  await saveTabGroupMap(groupMap);
+}
+
+async function openTabsWithOptionalGroup(validUrls, options = {}) {
+  const { groupKey, groupTitle, groupColor, windowId } = options;
+  const createdTabIds = [];
+
+  for (let i = 0; i < validUrls.length; i++) {
+    if (i > 0) await new Promise(resolve => setTimeout(resolve, 150));
+    const createOptions = { url: validUrls[i], active: false };
+    if (Number.isInteger(windowId)) createOptions.windowId = windowId;
+    const tab = await chrome.tabs.create(createOptions);
+    if (Number.isInteger(tab?.id)) createdTabIds.push(tab.id);
+  }
+
+  if (!groupKey || !groupTitle || !createdTabIds.length) {
+    return { count: createdTabIds.length, groupId: null };
+  }
+
+  const existingGroupId = await resolveExistingGroupId(groupKey, groupTitle, windowId);
+  const groupId = Number.isInteger(existingGroupId)
+    ? await chrome.tabs.group({ groupId: existingGroupId, tabIds: createdTabIds })
+    : await chrome.tabs.group({ tabIds: createdTabIds });
+
+  await chrome.tabGroups.update(groupId, {
+    title: groupTitle,
+    color: normalizeTabGroupColor(groupColor)
+  });
+  await rememberGroupId(groupKey, groupId);
+
+  return { count: createdTabIds.length, groupId };
+}
+
 // ── Слушатель загрузок CSV ──
 chrome.downloads.onChanged.addListener(downloadDelta => {
   if (downloadDelta.state && downloadDelta.state.current === 'complete') {
@@ -177,10 +254,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           })
           .filter(Boolean)
     )];
-    validUrls.forEach((url, i) => {
-      setTimeout(() => { chrome.tabs.create({ url, active: false }).catch(() => {}); }, i * 150);
+
+    (async () => {
+      const result = await openTabsWithOptionalGroup(validUrls, {
+        groupKey: typeof msg.groupKey === "string" ? msg.groupKey : null,
+        groupTitle: typeof msg.groupTitle === "string" ? msg.groupTitle : null,
+        groupColor: typeof msg.groupColor === "string" ? msg.groupColor : null,
+        windowId: sender?.tab?.windowId
+      });
+      sendResponse({ success: true, count: result.count, groupId: result.groupId });
+    })().catch(error => {
+      sendResponse({ success: false, error: String(error) });
     });
-    sendResponse({ success: true, count: validUrls.length });
+
     return true;
   }
 

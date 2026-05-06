@@ -143,6 +143,13 @@ function clearHighlight() {
     el.classList.remove("dist-highlight");
     el.style.outline = ""; el.style.boxShadow = "";
   });
+  // Восстанавливаем скрытые сделки
+  document.querySelectorAll(".dist-deal-hidden").forEach(el => {
+    el.classList.remove("dist-deal-hidden");
+    el.style.display = "";
+  });
+  // Убираем заголовок категории
+  document.querySelector("#dist-category-header")?.remove();
 }
 
 function clearSimpleActive() {
@@ -158,24 +165,102 @@ function resetVisualSelection(container, stateSet) {
   currentDeals = []; clearHighlight(); updateInfo(0); updateOpenBtn();
 }
 function resetState(message = "Выделение снято") {
-  activeCategories.clear(); activeCategory = null; currentDeals = [];
-  activeStarSubs.clear(); activeUCSubs.clear(); activeTelegramSubs.clear();
-  activeRobloxPromoSubs.clear(); activeRobloxSubs.clear(); activeGiftCardSubs.clear();
+  deactivateAllCategories(); currentDeals = [];
+  stopAutoOpenMonitor(false);
+  activeStarSubs.clear(); activeUCSubs.clear(); activeTelegramSubs.clear(); activePubgSubs.clear();
+  activeRobloxPromoSubs.clear(); activeRobloxSubs.clear(); activeArenaSubs.clear(); activeGiftCardSubs.clear();
   activeGiftarySubs.clear(); activeDonateSubs.clear(); activeNeuralSubs.clear(); activeAccountSubs.clear(); activeDessluHubSubs.clear();
   clearHighlight(); clearSimpleActive();
-  document.querySelectorAll(".dist-btn, .sub-btn, .sub-all").forEach(b => b.classList.remove("active"));
-  [starContainer, ucContainer, telegramContainer, robloxPromoContainer, robloxContainer, giftCardContainer, giftaryContainer, donateContainer, neuralContainer, accountContainer, dessluhubContainer].forEach(c => { if (c) c.style.display = "none"; });
+  document.querySelectorAll(".sub-btn, .sub-all").forEach(b => b.classList.remove("active"));
   updateInfo(0, message); updateOpenBtn();
 }
 function highlightDeals(deals, color) {
   clearHighlight();
-  deals.forEach(d => { 
-    d.classList.add("dist-highlight"); 
-    d.style.outline = `2px solid ${color}`; 
-    d.style.boxShadow = `0 0 20px ${color}, 0 0 8px ${color} inset`; 
-    d.style.borderRadius = "14px";
-    d.style.transition = "all .2s ease";
+  const matchSet = new Set(deals);
+  const allDeals = document.querySelectorAll("a[href^='/deal/']");
+
+  // Если нет совпадений — просто сбрасываем стили
+  if (!deals.length) {
+    allDeals.forEach(d => {
+      d.style.boxShadow = "none";
+      d.style.border = "none";
+      d.style.display = "";
+    });
+    return;
+  }
+
+  // Скрываем неподходящие сделки, подсвечиваем подходящие
+  allDeals.forEach(d => {
+    if (matchSet.has(d)) {
+      d.classList.add("dist-highlight"); 
+      d.style.outline = `2px solid ${color}`; 
+      d.style.boxShadow = `0 0 20px ${color}, 0 0 8px ${color} inset`; 
+      d.style.borderRadius = "14px";
+      d.style.transition = "all .2s ease";
+      d.style.display = "";
+    } else {
+      d.classList.add("dist-deal-hidden");
+      d.style.display = "none";
+    }
   });
+  
+  // Вставляем заголовок категории над сделками
+  const _firstActiveKey = [...activeCategories][0];
+  if (deals.length > 0 && _firstActiveKey) {
+    injectCategoryHeader(deals.length, color, _firstActiveKey);
+  }
+}
+
+function injectCategoryHeader(count, color, catKey) {
+  document.querySelector("#dist-category-header")?.remove();
+  const cat = CATEGORIES[catKey];
+  if (!cat) return;
+  
+  const header = document.createElement("div");
+  header.id = "dist-category-header";
+  header.style.cssText = `
+    display:flex;align-items:center;gap:10px;padding:10px 16px;
+    background:linear-gradient(135deg, rgba(12,16,32,0.92), rgba(8,10,24,0.95));
+    border:1px solid ${color}44;border-radius:14px;
+    margin-bottom:12px;font-family:'Inter',system-ui,sans-serif;
+    box-shadow:0 8px 24px rgba(0,0,0,0.3);
+    animation:dist-fade-in .25s ease;
+  `;
+  
+  const dot = document.createElement("span");
+  dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${color};box-shadow:0 0 10px ${color};flex-shrink:0;`;
+  
+  const titleEl = document.createElement("span");
+  titleEl.style.cssText = `font-size:13px;font-weight:800;color:#f8fafc;flex:1;`;
+  titleEl.textContent = `${cat.emoji || '•'} ${cat.title}`;
+  
+  const badge = document.createElement("span");
+  badge.style.cssText = `font-size:11px;font-weight:700;color:${color};padding:4px 10px;background:${color}18;border:1px solid ${color}33;border-radius:999px;`;
+  badge.textContent = `Сделок: ${count}`;
+  
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.textContent = "✕ Сбросить";
+  closeBtn.style.cssText = `border:none;background:rgba(239,68,68,0.12);color:#fca5a5;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;font-family:inherit;transition:all .15s;`;
+  closeBtn.addEventListener("mouseenter", () => { closeBtn.style.background = 'rgba(239,68,68,0.25)'; });
+  closeBtn.addEventListener("mouseleave", () => { closeBtn.style.background = 'rgba(239,68,68,0.12)'; });
+  closeBtn.onclick = () => resetState("Фильтр сброшен");
+  
+  header.appendChild(dot);
+  header.appendChild(titleEl);
+  header.appendChild(badge);
+  header.appendChild(closeBtn);
+  
+  // Вставляем перед первой сделкой
+  const firstDeal = document.querySelector("a[href^='/deal/']");
+  if (firstDeal) {
+    let host = firstDeal.parentElement;
+    while (host && host.parentElement && host.parentElement !== document.body) {
+      if (host.querySelectorAll("a[href^='/deal/']").length >= 4) break;
+      host = host.parentElement;
+    }
+    if (host) host.insertBefore(header, host.firstChild);
+  }
 }
 function highlightSimpleButton(btn, color) {
   clearSimpleActive(); activeSimpleBtn = btn;
@@ -187,35 +272,452 @@ function distOpenDeals() { openDeals(); }
 // Make function globally accessible
 window.distOpenDeals = distOpenDeals;
 
-function openDeals() {
-  if (!currentDeals.length) return;
-  const countInput = document.querySelector("#dist-open-count");
-  const fromSelect = document.querySelector("#dist-open-from");
-  const rawCount = Number(countInput?.value || currentDeals.length);
-  const safeCount = Number.isFinite(rawCount) ? Math.max(1, Math.min(currentDeals.length, Math.floor(rawCount))) : currentDeals.length;
-  const from = fromSelect?.value === "end" ? "end" : "start";
-  const selectedDeals = from === "end"
-    ? currentDeals.slice(-safeCount).reverse()
-    : currentDeals.slice(0, safeCount);
+let autoOpenMonitorTimer = null;
+let autoOpenMonitorState = null;
 
-  const urls = selectedDeals.map(d => {
-    const href = d.href || d.getAttribute("href") || "";
-    if (href.startsWith("http")) return href;
-    if (href.startsWith("/")) return "https://playerok.com" + href;
-    return null;
-  }).filter(Boolean);
+function normalizeDealUrl(href) {
+  if (!href || typeof href !== "string") return null;
+  if (href.startsWith("http")) return href;
+  if (href.startsWith("/")) return "https://playerok.com" + href;
+  return null;
+}
 
-  if (!urls.length) { updateInfo(0, "Нет ссылок"); return; }
+function getSelectedDealsSlice(limit, from) {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(currentDeals.length, Math.floor(limit)))
+    : currentDeals.length;
+  const safeFrom = from === "end" ? "end" : "start";
+  const selectedDeals = safeFrom === "end"
+    ? currentDeals.slice(-safeLimit).reverse()
+    : currentDeals.slice(0, safeLimit);
 
-  // Открываем через background service worker
-  chrome.runtime.sendMessage({ type: "OPEN_TABS", urls }, response => {
-    if (chrome.runtime.lastError) {
-      // Service worker недоступен — открываем напрямую
-      urls.forEach((url, i) => setTimeout(() => window.open(url, "_blank"), i * 300));
-    }
+  return { safeLimit, safeFrom, selectedDeals };
+}
+
+function collectSelectedDealUrls(limit, from) {
+  const { safeLimit, safeFrom, selectedDeals } = getSelectedDealsSlice(limit, from);
+  const urls = [...new Set(selectedDeals.map(d => normalizeDealUrl(d.href || d.getAttribute("href") || "")).filter(Boolean))];
+  return { safeLimit, safeFrom, selectedDeals, urls };
+}
+
+function getSingleExplicitSelection(stateSet) {
+  if (!stateSet || typeof stateSet.size !== "number") return null;
+  const values = [...stateSet].filter(v => v !== "all");
+  return values.length === 1 ? values[0] : null;
+}
+
+function getNeuralGroupDescriptor() {
+  const selectedValue = getSingleExplicitSelection(activeNeuralSubs);
+  if (!selectedValue) {
+    return { key: "neural", title: CATEGORIES.neural.title, color: "blue" };
+  }
+
+  const selectedItem = NEURAL_VALUES.find(item => item.value === selectedValue);
+  return {
+    key: `neural:${selectedValue}`,
+    title: selectedItem?.label || CATEGORIES.neural.title,
+    color: "blue"
+  };
+}
+
+function getGroupColorForCategoryKey(key) {
+  const colorMap = {
+    telegram: "blue",
+    uc: "cyan",
+    pubg: "orange",
+    robloxpromo: "green",
+    roblox: "green",
+    donate: "blue",
+    giftcard: "yellow",
+    promo: "purple",
+    keys: "orange",
+    neural: "blue",
+    steamgift: "yellow",
+    giftary: "purple",
+    dessluhub: "red",
+    mobilelegends: "red",
+    arena: "orange",
+    account: "cyan",
+    notion: "blue",
+    chesscom: "green"
+  };
+
+  return colorMap[key] || "grey";
+}
+
+function getCurrentGroupDescriptor() {
+  if (!activeCategory) return null;
+
+  if (activeCategory === "neural") {
+    return getNeuralGroupDescriptor();
+  }
+
+  const categoryTitle = CATEGORIES[activeCategory]?.title || activeCategory;
+
+  return {
+    key: activeCategory,
+    title: categoryTitle,
+    color: getGroupColorForCategoryKey(activeCategory)
+  };
+}
+
+function stopAutoOpenMonitor(showMessage = false) {
+  if (autoOpenMonitorTimer) {
+    clearInterval(autoOpenMonitorTimer);
+    autoOpenMonitorTimer = null;
+  }
+
+  if (showMessage && autoOpenMonitorState) {
+    updateInfo(currentDeals.length, `Автомонитор ${autoOpenMonitorState.groupTitle} остановлен`);
+  }
+
+  autoOpenMonitorState = null;
+  updateSelectedCategoryMonitorButton();
+}
+
+function processSelectedCategoryMonitor() {
+  if (!autoOpenMonitorState) return;
+
+  const currentDescriptor = getCurrentGroupDescriptor();
+  if (!currentDescriptor || currentDescriptor.key !== autoOpenMonitorState.descriptorKey) {
+    stopAutoOpenMonitor(true);
+    return;
+  }
+
+  const urls = [...new Set(
+    currentDeals
+      .map(deal => normalizeDealUrl(deal?.href || deal?.getAttribute?.("href") || ""))
+      .filter(Boolean)
+  )];
+  const newUrls = urls.filter(url => !autoOpenMonitorState.seenUrls.has(url));
+
+  if (!newUrls.length) return;
+
+  newUrls.forEach(url => autoOpenMonitorState.seenUrls.add(url));
+  chrome.runtime.sendMessage({
+    type: "OPEN_TABS",
+    urls: newUrls,
+    groupKey: autoOpenMonitorState.groupKey,
+    groupTitle: autoOpenMonitorState.groupTitle,
+    groupColor: autoOpenMonitorState.groupColor
+  }, () => {});
+
+  updateInfo(currentDeals.length, `Монитор ${autoOpenMonitorState.groupTitle}: +${newUrls.length} новых`);
+}
+
+function startAutoOpenMonitor(descriptor, initialUrls) {
+  stopAutoOpenMonitor(false);
+
+  autoOpenMonitorState = {
+    descriptorKey: descriptor.key,
+    groupKey: descriptor.key,
+    groupTitle: descriptor.title,
+    groupColor: descriptor.color,
+    seenUrls: new Set(initialUrls)
+  };
+
+}
+
+function extractDealIdFromUrl(url) {
+  if (!url) return null;
+  const match = String(url).match(/\/deal\/([^/?#]+)/i);
+  return match ? match[1] : String(url);
+}
+
+function withTemporarySetValues(stateSet, values, fn) {
+  const previousValues = [...stateSet];
+  stateSet.clear();
+  values.forEach(value => stateSet.add(value));
+  try {
+    return fn() || [];
+  } finally {
+    stateSet.clear();
+    previousValues.forEach(value => stateSet.add(value));
+  }
+}
+
+function mergeDealArrays(...arrays) {
+  const uniqueDeals = new Set();
+  const result = [];
+
+  arrays.flat().forEach(deal => {
+    if (!deal || uniqueDeals.has(deal)) return;
+    uniqueDeals.add(deal);
+    result.push(deal);
   });
 
-  updateInfo(currentDeals.length, `Открыто: ${urls.length} (${from === "end" ? "с конца" : "с начала"})`);
+  return result;
+}
+
+function getSimpleCategoryDeals(key) {
+  const cat = CATEGORIES[key];
+  if (!cat) return [];
+
+  return [...document.querySelectorAll("a[href^='/deal/']")].filter(deal => {
+    const text = getDealText(deal);
+    if (cat.exclude && cat.exclude.some(excludeWord => text.includes(excludeWord))) return false;
+    if (typeof cat.match === "function") return cat.match(text);
+    return Array.isArray(cat.keywords) && cat.keywords.some(keyword => text.includes(keyword));
+  });
+}
+
+function getMonitorDealsForCategory(key) {
+  switch (key) {
+    case "telegram":
+      return mergeDealArrays(
+        withTemporarySetValues(activeStarSubs, ["all"], () => applyTelegramUnifiedFilter()),
+        withTemporarySetValues(activeTelegramSubs, ["all"], () => applyTelegramUnifiedFilter())
+      );
+    case "uc":
+      return withTemporarySetValues(activeUCSubs, ["all"], () => applyUCFilter());
+    case "roblox":
+      return mergeDealArrays(
+        withTemporarySetValues(activeRobloxSubs, ["all"], () => applyRobloxFilter()),
+        withTemporarySetValues(activeRobloxSubs, ["gamepass"], () => applyRobloxFilter())
+      );
+    case "donate":
+      return withTemporarySetValues(activeDonateSubs, ["all"], () => applyDonateFilter());
+    case "giftcard":
+      return withTemporarySetValues(activeGiftCardSubs, ["all"], () => applyGiftCardFilter());
+    case "neural":
+      return withTemporarySetValues(activeNeuralSubs, ["all"], () => applyNeuralFilter());
+    case "giftary":
+      return withTemporarySetValues(activeGiftarySubs, ["all"], () => applyGiftaryFilter());
+    case "dessluhub":
+      return withTemporarySetValues(activeDessluHubSubs, ["all"], () => applyDessluHubFilter());
+    case "arena":
+      return withTemporarySetValues(activeArenaSubs, ["all"], () => applyArenaFilter());
+    case "account":
+      return withTemporarySetValues(activeAccountSubs, ["all"], () => applyAccountFilter());
+    default:
+      return getSimpleCategoryDeals(key);
+  }
+}
+
+function getMonitorGroupDescriptorByKey(key) {
+  return {
+    key: `monitor:${key}`,
+    title: CATEGORIES[key]?.title || key,
+    color: getGroupColorForCategoryKey(key)
+  };
+}
+
+function getCategoryStreamMount() {
+  let mount = document.querySelector("#dist-category-streams");
+  if (mount) return mount;
+
+  const firstDeal = document.querySelector("a[href^='/deal/']");
+  if (!firstDeal) return null;
+
+  let host = firstDeal.parentElement;
+  while (host && host.parentElement && host.parentElement !== document.body) {
+    const hostDealCount = host.querySelectorAll("a[href^='/deal/']").length;
+    if (hostDealCount >= 4) break;
+    host = host.parentElement;
+  }
+  if (!host) return null;
+
+  mount = document.createElement("div");
+  mount.id = "dist-category-streams";
+  mount.style.cssText = "grid-column:1 / -1;width:100%;display:grid;gap:12px;margin:10px 0 14px;animation:dist-fade-in .25s ease;";
+  host.insertBefore(mount, host.firstChild);
+  return mount;
+}
+
+function cleanupDealClone(node) {
+  node.querySelectorAll(".dist-highlight").forEach(el => el.classList.remove("dist-highlight"));
+  node.querySelectorAll("[style]").forEach(el => {
+    el.style.outline = "";
+    el.style.boxShadow = "";
+  });
+  node.style.outline = "";
+  node.style.boxShadow = "";
+  node.style.borderRadius = "16px";
+  node.style.minWidth = "260px";
+  node.style.maxWidth = "340px";
+  node.style.flex = "0 0 300px";
+  return node;
+}
+
+function renderCategoryStreams() {
+  const mount = getCategoryStreamMount();
+  if (!mount) return;
+
+  if (!activeCategoryStreams.size) {
+    mount.innerHTML = "";
+    mount.style.display = "none";
+    return;
+  }
+
+  mount.style.display = "grid";
+  mount.innerHTML = "";
+
+  [...activeCategoryStreams].forEach(key => {
+    const descriptor = getMonitorGroupDescriptorByKey(key);
+    const deals = getMonitorDealsForCategory(key).slice(0, 12);
+
+    const section = document.createElement("div");
+    section.dataset.categoryStream = key;
+    section.style.cssText = `background:linear-gradient(165deg, rgba(12,16,32,0.88), rgba(8,10,24,0.92));border:1px solid rgba(99,102,241,0.22);border-radius:18px;padding:12px;box-shadow:0 18px 40px rgba(0,0,0,0.35);`;
+
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;";
+
+    const title = document.createElement("div");
+    title.style.cssText = `display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;color:#f8fafc;flex:1;`;
+    title.innerHTML = `<span style="width:10px;height:10px;border-radius:999px;background:${CATEGORIES[key]?.color || "#6366f1"};box-shadow:0 0 10px ${CATEGORIES[key]?.color || "#6366f1"}"></span><span>${CATEGORIES[key]?.emoji || "•"} ${descriptor.title}</span>`;
+
+    const count = document.createElement("div");
+    count.style.cssText = "font-size:11px;font-weight:700;color:#a5b4fc;padding:4px 8px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.24);border-radius:999px;";
+    count.textContent = deals.length ? `Сделок: ${deals.length}` : "Нет сделок";
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.style.cssText = "border:none;background:rgba(239,68,68,0.12);color:#fca5a5;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:16px;line-height:1;";
+    close.onclick = () => {
+      activeCategoryStreams.delete(key);
+      renderCategoryStreams();
+    };
+
+    header.appendChild(title);
+    header.appendChild(count);
+    header.appendChild(close);
+
+    const body = document.createElement("div");
+    body.style.cssText = "display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;";
+
+    if (!deals.length) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "padding:12px 14px;font-size:12px;color:#94a3b8;background:rgba(15,23,42,0.55);border:1px solid rgba(51,65,85,0.45);border-radius:12px;";
+      empty.textContent = "Подходящих сделок пока нет";
+      body.appendChild(empty);
+    } else {
+      deals.forEach(deal => {
+        const clone = cleanupDealClone(deal.cloneNode(true));
+        clone.target = "_blank";
+        body.appendChild(clone);
+      });
+    }
+
+    section.appendChild(header);
+    section.appendChild(body);
+    mount.appendChild(section);
+  });
+}
+
+function ensureCategoryStream(key) {
+  if (!key) return;
+  activeCategoryStreams.add(key);
+  renderCategoryStreams();
+}
+
+function updateSelectedCategoryMonitorButton() {
+  const btn = document.querySelector("#dist-monitor-all");
+  if (!btn) return;
+
+  const isActive = !!autoOpenMonitorState;
+  const text = btn.querySelector("#dist-monitor-all-text");
+  const icon = btn.querySelector("#dist-monitor-all-icon");
+
+  btn.style.background = isActive
+    ? "linear-gradient(135deg,rgba(34,197,94,0.25),rgba(16,185,129,0.18))"
+    : "linear-gradient(135deg,rgba(99,102,241,0.25),rgba(139,92,246,0.15))";
+  btn.style.borderColor = isActive ? "rgba(34,197,94,0.5)" : "rgba(99,102,241,0.4)";
+  btn.style.color = isActive ? "#86efac" : "#c7d2fe";
+  btn.style.boxShadow = isActive
+    ? "0 4px 15px rgba(34,197,94,0.25)"
+    : "0 4px 15px rgba(99,102,241,0.2)";
+
+  if (icon) icon.textContent = isActive ? "■" : "◉";
+  if (text) text.textContent = isActive
+    ? `Стоп: ${autoOpenMonitorState.groupTitle}`
+    : "Монитор выбранной категории";
+}
+
+function toggleSelectedCategoryMonitor() {
+  if (autoOpenMonitorState) {
+    stopAutoOpenMonitor(true);
+    updateSelectedCategoryMonitorButton();
+    return;
+  }
+
+  if (!activeCategory) {
+    updateInfo(0, "Сначала выбери категорию");
+    return;
+  }
+
+  updateMergedDeals();
+  const descriptor = getCurrentGroupDescriptor();
+  if (!descriptor) {
+    updateInfo(0, "Не удалось определить выбранную категорию");
+    return;
+  }
+
+  const urls = [...new Set(
+    currentDeals
+      .map(deal => normalizeDealUrl(deal?.href || deal?.getAttribute?.("href") || ""))
+      .filter(Boolean)
+  )];
+
+  startAutoOpenMonitor(descriptor, urls);
+  updateSelectedCategoryMonitorButton();
+  updateInfo(currentDeals.length, `Монитор ${descriptor.title} включен: новые сделки будут открываться сразу`);
+}
+
+function openDeals() {
+  // Останавливаем монитор — он не должен дооткрывать оставшиеся сделки
+  stopAutoOpenMonitor(false);
+
+  // Освежаем currentDeals — DOM мог обновиться после выбора категории
+  try { updateMergedDeals(); } catch(_) {}
+
+  if (!currentDeals.length) {
+    updateInfo(0, "Сначала выбери категорию");
+    return;
+  }
+
+  const countInput = document.querySelector("#dist-open-count");
+  const fromSelect = document.querySelector("#dist-open-from");
+  const rawCount = Number(countInput?.value);
+  const limit = Number.isFinite(rawCount) && rawCount > 0 ? rawCount : currentDeals.length;
+  const from = fromSelect?.value === "end" ? "end" : "start";
+  const useGrouping = localStorage.getItem('dist_group_tabs_enabled') !== 'false';
+  const descriptor = useGrouping ? getCurrentGroupDescriptor() : null;
+  const { safeLimit, safeFrom, urls } = collectSelectedDealUrls(limit, from);
+
+  if (!urls.length) {
+    updateInfo(0, "Нет ссылок (href не найден у сделок)");
+    return;
+  }
+
+  // Открываем через background service worker, с фолбэком на window.open
+  let fallbackUsed = false;
+  try {
+    chrome.runtime.sendMessage({
+      type: "OPEN_TABS",
+      urls,
+      groupKey: descriptor?.key || null,
+      groupTitle: descriptor?.title || null,
+      groupColor: descriptor?.color || null
+    }, response => {
+      if ((chrome.runtime.lastError || !response?.success) && !fallbackUsed) {
+        fallbackUsed = true;
+        urls.forEach((url, i) => setTimeout(() => window.open(url, "_blank"), i * 200));
+      }
+    });
+  } catch (err) {
+    if (!fallbackUsed) {
+      fallbackUsed = true;
+      urls.forEach((url, i) => setTimeout(() => window.open(url, "_blank"), i * 200));
+    }
+  }
+
+  // НЕ запускаем автомонитор автоматически — иначе он открывает оставшиеся сделки.
+  // Пользователь запускает мониторинг отдельной кнопкой, если нужно.
+
+  const groupNote = useGrouping ? "" : " · без группы";
+  updateInfo(currentDeals.length, `Открыто: ${urls.length} (${safeFrom === "end" ? "с конца" : "с начала"})${groupNote}`);
 }
 function updateOpenBtn() {
   const btn = document.querySelector("#dist-open"); if (!btn) return;
@@ -237,6 +739,7 @@ function updateOpenBtn() {
 function updateInfo(count, text) {
   const info = document.querySelector("#dist-info"); if (!info) return;
   info.textContent = text ? text : count ? `Найдено сделок: ${count}` : "Совпадений нет";
+  info.classList.toggle("has-deals", !!count);
 }
 function highlightAllButton(allBtn, container) {
   allBtn.classList.add("active");
@@ -244,10 +747,12 @@ function highlightAllButton(allBtn, container) {
 }
 const FILTER_FUNCTIONS = {
   uc: () => typeof applyUCFilter === "function" ? applyUCFilter() : [],
+  pubg: () => typeof applyPubgFilter === "function" ? applyPubgFilter() : [],
   robloxpromo: () => typeof applyRobloxPromoFilter === "function" ? applyRobloxPromoFilter() : [],
   giftcard: () => typeof applyGiftCardFilter === "function" ? applyGiftCardFilter() : [],
   telegram: () => typeof applyTelegramUnifiedFilter === "function" ? applyTelegramUnifiedFilter() : [],
   roblox: () => typeof applyRobloxFilter === "function" ? applyRobloxFilter() : [],
+  arena: () => typeof applyArenaFilter === "function" ? applyArenaFilter() : [],
   donate: () => typeof applyDonateFilter === "function" ? applyDonateFilter() : [],
   dessluhub: () => typeof applyDessluHubFilter === "function" ? applyDessluHubFilter() : [],
   giftary: () => typeof applyGiftaryFilter === "function" ? applyGiftaryFilter() : [],
@@ -256,9 +761,18 @@ const FILTER_FUNCTIONS = {
 };
 
 function updateMergedDeals() {
+  // Отдельный выключатель распределения — НЕ трогает автокопирование/приветствия
+  if (localStorage.getItem('dist_distribution_enabled') === 'false') {
+    currentDeals = [];
+    clearHighlight();
+    updateInfo(0, "Распределение выключено");
+    updateOpenBtn();
+    return;
+  }
+
   const allDeals = [...document.querySelectorAll("a[href^='/deal/']")];
   const results = new Set();
-  
+
   if (activeCategories.size === 0) {
     currentDeals = [];
     clearHighlight();
@@ -280,7 +794,7 @@ function updateMergedDeals() {
     // Обычная фильтрация по ключевым словам (простая категория)
     const cat = CATEGORIES[key];
     allDeals.forEach(c => {
-      const t = c.innerText.toLowerCase();
+      const t = getDealText(c);
       let match = false;
       if (cat.exclude && cat.exclude.some(k => t.includes(k))) return;
       if (typeof cat.match === "function") match = cat.match(t);
@@ -301,19 +815,14 @@ function updateMergedDeals() {
 function addSimple(parent, key) {
   const b = document.createElement("div");
   b.className = "dist-btn";
+  if (activeCategories.has(key)) {
+    b.classList.add("active");
+    b.style.boxShadow = `0 0 12px ${CATEGORIES[key].color}`;
+    b.style.border = `1px solid ${CATEGORIES[key].color}`;
+  }
   b.textContent = `${CATEGORIES[key].emoji} ${CATEGORIES[key].title}`;
   b.onclick = () => {
-    if (activeCategories.has(key)) {
-      activeCategories.delete(key);
-      b.classList.remove("active");
-      b.style.boxShadow = "";
-      b.style.border = "1px solid transparent";
-    } else {
-      activeCategories.add(key);
-      b.classList.add("active");
-      b.style.boxShadow = `0 0 12px ${CATEGORIES[key].color}`;
-      b.style.border = `1px solid ${CATEGORIES[key].color}`;
-    }
+    const activated = toggleSingleCategory(key, b);
     updateMergedDeals();
   };
   parent.appendChild(b);
@@ -324,6 +833,7 @@ function reapplyCurrentFilter() {
   const filters = {
     telegram: typeof applyTelegramUnifiedFilter === "function" ? applyTelegramUnifiedFilter : null,
     uc: typeof applyUCFilter === "function" ? applyUCFilter : null,
+    pubg: typeof applyPubgFilter === "function" ? applyPubgFilter : null,
     robloxpromo: typeof applyRobloxPromoFilter === "function" ? applyRobloxPromoFilter : null,
     roblox: typeof applyRobloxFilter === "function" ? applyRobloxFilter : null,
     giftcard: typeof applyGiftCardFilter === "function" ? applyGiftCardFilter : null,
@@ -336,7 +846,7 @@ function reapplyCurrentFilter() {
     keys: () => triggerSimpleFilter("keys"),
     steamgift: () => triggerSimpleFilter("steamgift"),
     mobilelegends: () => triggerSimpleFilter("mobilelegends"),
-    arena: () => triggerSimpleFilter("arena"),
+    arena: typeof applyArenaFilter === "function" ? applyArenaFilter : () => triggerSimpleFilter("arena"),
     notion: () => triggerSimpleFilter("notion"),
     chesscom: () => triggerSimpleFilter("chesscom")
   };
@@ -345,7 +855,7 @@ function reapplyCurrentFilter() {
 
 function triggerSimpleFilter(key) {
   const deals = [...document.querySelectorAll("a[href^='/deal/']")].filter(c => {
-    const t = c.innerText.toLowerCase(); const cat = CATEGORIES[key];
+    const t = getDealText(c); const cat = CATEGORIES[key];
     if (cat.exclude && cat.exclude.some(k => t.includes(k))) return false;
     if (typeof cat.match === "function") return cat.match(t);
     return cat.keywords.some(k => t.includes(k));
@@ -357,13 +867,24 @@ function triggerSimpleFilter(key) {
 }
 
 function startOptimizedObserver() {
+  let _lastObserverRun = 0;
   const handleMutation = () => {
     clearTimeout(observerTimeout);
-    observerTimeout = setTimeout(() => { 
+    // 🔑 ОПТИМИЗАЦИЯ: уменьшен дебаунс до 300мс для скорости
+    observerTimeout = setTimeout(() => {
+      const now = Date.now();
+      // Не запускаем чаще чем раз в 300мс для отзывчивости
+      if (now - _lastObserverRun < 300) return;
+      _lastObserverRun = now;
       mountGreetingButton(); 
       refreshGreetingUi(); 
-      updateMergedDeals();
-    }, 500);
+      // Обновляем сделки только если есть активная категория
+      if (activeCategories.size > 0) {
+        updateMergedDeals();
+        processSelectedCategoryMonitor();
+        if (activeCategoryStreams.size > 0) renderCategoryStreams();
+      }
+    }, 300);
   };
   mutationObserver = new MutationObserver(handleMutation);
   mutationObserver.observe(document.body, { childList: true, subtree: true });
@@ -414,13 +935,16 @@ function createPanel() {
   panel.id = "distribution-panel";
   panel.style.cssText = `
     position:fixed;right:20px;top:5%;
-    width:270px;max-height:88vh;min-width:260px;min-height:200px;
-    background:linear-gradient(165deg, rgba(12, 16, 32, 0.92), rgba(8, 10, 24, 0.96));
-    backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);
-    border:1px solid rgba(99, 102, 241, 0.25);color:#f1f5f9;border-radius:24px;
-    box-shadow:0 20px 50px -12px rgba(0,0,0,0.8), 0 0 40px rgba(99,102,241,0.08), inset 0 1px 1px rgba(255,255,255,0.05);
+    width:270px;max-height:88vh;min-width:240px;min-height:200px;
+    background:
+      radial-gradient(circle at 0% 0%, rgba(99,102,241,0.12), transparent 50%),
+      radial-gradient(circle at 100% 100%, rgba(168,85,247,0.10), transparent 50%),
+      linear-gradient(165deg, rgba(12, 16, 32, 0.94), rgba(6, 8, 20, 0.97));
+    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);
+    border:1px solid rgba(99, 102, 241, 0.28);color:#f1f5f9;border-radius:22px;
+    box-shadow:0 25px 60px -12px rgba(0,0,0,0.85), 0 0 60px rgba(99,102,241,0.10), inset 0 1px 1px rgba(255,255,255,0.06);
     padding:16px;z-index:999999;font-family:'Outfit', 'Inter', system-ui, sans-serif;display:none;
-    overflow:hidden;transition:transform .3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-y:auto;overflow-x:hidden;transition:transform .3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow .3s ease;
     resize: both;
   `;
 
@@ -439,27 +963,44 @@ function createPanel() {
     #distribution-panel::-webkit-scrollbar-track,#distribution-panel *::-webkit-scrollbar-track{background:rgba(15,23,42,0.3);border-radius:10px}
     #distribution-panel::-webkit-scrollbar-thumb,#distribution-panel *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(99,102,241,0.4),rgba(139,92,246,0.3));border-radius:10px;border:1px solid rgba(99,102,241,0.15)}
     #distribution-panel::-webkit-scrollbar-thumb:hover,#distribution-panel *::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(99,102,241,0.6),rgba(139,92,246,0.5))}
-    .dist-btn{padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:12px;margin-bottom:6px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,0.06);color:#cbd5e1;transition:all .25s cubic-bezier(0.4, 0, 0.2, 1);display:flex;align-items:center;gap:8px;letter-spacing:.2px;position:relative;overflow:hidden}
-    .dist-btn::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 40%,rgba(99,102,241,0.06) 50%,transparent 60%);background-size:200% 100%;animation:dist-shimmer 3s ease-in-out infinite;pointer-events:none}
-    .dist-btn:hover{background:rgba(99,102,241,0.12);border-color:rgba(99,102,241,0.4);color:#f8fafc;box-shadow:0 8px 20px -8px rgba(99,102,241,0.4);transform:translateY(-1px) scale(1.01)}
+    .dist-btn{padding:9px 12px;background:rgba(255,255,255,0.03);border-radius:12px;margin-bottom:6px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,0.06);color:#cbd5e1;transition:all .25s cubic-bezier(0.4, 0, 0.2, 1);display:flex;align-items:center;gap:8px;letter-spacing:.2px;position:relative;overflow:hidden}
+    .dist-btn::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 40%,rgba(99,102,241,0.08) 50%,transparent 60%);background-size:200% 100%;pointer-events:none;opacity:0;transition:opacity .2s}
+    .dist-btn:hover::before{animation:dist-shimmer 2s ease-in-out;opacity:1}
+    .dist-btn:hover{background:rgba(99,102,241,0.12);border-color:rgba(99,102,241,0.4);color:#f8fafc;box-shadow:0 8px 22px -8px rgba(99,102,241,0.45);transform:translateY(-1px) scale(1.01)}
     .dist-btn:active{transform:translateY(0) scale(0.98)}
-    .dist-btn.active{background:rgba(99,102,241,0.2);border-color:rgba(99,102,241,0.6);color:#fff;box-shadow:0 0 15px rgba(99,102,241,0.3)}
-    .sub-all{padding:6px 10px;background:rgba(255,255,255,0.05);border-radius:10px;text-align:center;cursor:pointer;margin:6px 0;border:1px solid rgba(255,255,255,0.08);color:#94a3b8;font-size:10px;font-weight:700;transition:all .2s ease;letter-spacing:.5px;text-transform:uppercase}
-    .sub-all:hover{border-color:rgba(99,102,241,0.5);color:#fff;background:rgba(99,102,241,0.15);box-shadow:0 4px 12px rgba(99,102,241,0.2)}
-    .sub-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px;background:rgba(0,0,0,0.2);border-radius:14px;margin-bottom:8px;max-height:42vh;overflow-y:auto;border:1px solid rgba(255,255,255,0.04);animation:dist-fade-in .3s ease}
-    .sub-btn{padding:6px 4px;background:rgba(255,255,255,0.03);border-radius:9px;font-size:11px;font-weight:600;text-align:center;cursor:pointer;border:1px solid rgba(255,255,255,0.05);color:#94a3b8;transition:all .15s ease;display:flex;align-items:center;justify-content:center}
-    .sub-btn:hover{border-color:rgba(99,102,241,0.5);color:#fff;background:rgba(99,102,241,0.1);box-shadow:0 0 12px rgba(99,102,241,0.15)}
-    .sub-btn.active, .sub-all.active{border-color:#6366f1;background:rgba(99,102,241,0.2);color:#fff;box-shadow:0 0 12px rgba(99,102,241,0.3)}
-    .sub-label{font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#64748b;margin:12px 0 6px 4px}
+    .dist-btn.active{background:linear-gradient(135deg,rgba(99,102,241,0.28),rgba(139,92,246,0.18));border-color:rgba(99,102,241,0.7);color:#fff;box-shadow:0 0 0 1px rgba(99,102,241,0.3) inset, 0 6px 20px -6px rgba(99,102,241,0.5)}
+    .dist-btn.active::after{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:60%;background:linear-gradient(180deg,#6366f1,#a855f7);border-radius:0 3px 3px 0;box-shadow:0 0 8px rgba(99,102,241,0.7)}
+    .sub-all{padding:7px 10px;background:rgba(255,255,255,0.05);border-radius:10px;text-align:center;cursor:pointer;margin:6px 0;border:1px solid rgba(255,255,255,0.10);color:#cbd5e1;font-size:10px;font-weight:800;transition:all .2s ease;letter-spacing:.7px;text-transform:uppercase}
+    .sub-all:hover{border-color:rgba(99,102,241,0.55);color:#fff;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(139,92,246,0.10));box-shadow:0 4px 14px rgba(99,102,241,0.25)}
+    .sub-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px;background:rgba(0,0,0,0.25);border-radius:14px;margin-bottom:8px;max-height:42vh;overflow-y:auto;border:1px solid rgba(255,255,255,0.05);animation:dist-fade-in .3s ease;box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)}
+    .sub-btn{padding:7px 4px;background:rgba(255,255,255,0.03);border-radius:10px;font-size:11px;font-weight:600;text-align:center;cursor:pointer;border:1px solid rgba(255,255,255,0.05);color:#94a3b8;transition:all .15s ease;display:flex;align-items:center;justify-content:center}
+    .sub-btn:hover{border-color:rgba(99,102,241,0.5);color:#fff;background:rgba(99,102,241,0.10);box-shadow:0 0 12px rgba(99,102,241,0.18);transform:translateY(-1px)}
+    .sub-btn.active, .sub-all.active{border-color:#6366f1;background:linear-gradient(135deg,rgba(99,102,241,0.28),rgba(139,92,246,0.16));color:#fff;box-shadow:0 0 14px rgba(99,102,241,0.35),inset 0 1px 0 rgba(255,255,255,0.08)}
+    .sub-label{font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#818cf8;margin:12px 0 6px 4px;opacity:.85;display:flex;align-items:center;gap:6px}
+    .sub-label::before{content:'';width:3px;height:10px;background:linear-gradient(180deg,#6366f1,#a855f7);border-radius:2px;display:inline-block}
     .dist-icon{cursor:pointer;font-size:14px;transition:all .2s cubic-bezier(0.4, 0, 0.2, 1);width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#94a3b8}
-    .dist-icon:hover{background:rgba(99,102,241,0.15);border-color:rgba(99,102,241,0.5);color:#fff;transform:scale(1.1);box-shadow:0 0 15px rgba(99,102,241,0.3)}
+    .dist-icon:hover{background:linear-gradient(135deg,rgba(99,102,241,0.22),rgba(139,92,246,0.15));border-color:rgba(99,102,241,0.55);color:#fff;transform:scale(1.12) translateY(-1px);box-shadow:0 0 18px rgba(99,102,241,0.4)}
+    .dist-icon:active{transform:scale(0.95)}
+    .dist-toggle { position:relative; display:inline-block; width:40px; height:22px; cursor:pointer; }
+    .dist-toggle input { opacity:0; width:0; height:0; }
+    .dist-slider { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(51,65,85,0.6); border-radius:22px; transition:.3s; border:1px solid rgba(99,102,241,0.2); }
+    .dist-knob { position:absolute; content:''; height:16px; width:16px; left:3px; bottom:2px; background:#94a3b8; border-radius:50%; transition:.3s; }
+    input:checked + .dist-slider { background:rgba(99,102,241,0.4) !important; border-color:rgba(99,102,241,0.6); }
+    input:checked + .dist-slider + .dist-knob { transform:translateX(18px); background:#6366f1 !important; }
     .dist-control-wrap{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
-    .dist-input{width:100%;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);color:#f1f5f9;border-radius:10px;padding:8px 12px;font-size:12px;font-family:inherit;outline:none;transition:all .2s ease}
-    .dist-input:focus{border-color:rgba(99,102,241,0.6);box-shadow:0 0 0 3px rgba(99,102,241,0.15)}
+    .dist-input{width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);color:#f1f5f9;border-radius:11px;padding:9px 12px;font-size:12px;font-weight:600;font-family:inherit;outline:none;transition:all .2s ease;box-shadow:inset 0 1px 2px rgba(0,0,0,0.3)}
+    .dist-input:hover{border-color:rgba(99,102,241,0.35);background:rgba(0,0,0,0.35)}
+    .dist-input:focus{border-color:rgba(99,102,241,0.65);box-shadow:0 0 0 3px rgba(99,102,241,0.18),inset 0 1px 2px rgba(0,0,0,0.3);background:rgba(0,0,0,0.40)}
     .dist-divider{height:1px;background:linear-gradient(90deg,transparent,rgba(99,102,241,0.3),transparent);margin:12px 0;position:relative}
     .dist-badge{position:absolute;top:-4px;right:-4px;background:linear-gradient(135deg,#ef4444,#f87171);color:white;font-size:9px;font-weight:800;padding:2px 6px;border-radius:12px;box-shadow:0 2px 8px rgba(239,68,68,0.4)}
-    #dist-open.dist-open-ready{animation:dist-open-pulse 2s ease-in-out infinite;background:linear-gradient(135deg,rgba(34,197,94,0.25),rgba(16,185,129,0.18))!important;border-color:rgba(34,197,94,0.5)!important;color:#86efac!important}
-    #dist-open .dist-open-ripple{position:absolute;border-radius:50%;background:rgba(34,197,94,0.4);width:20px;height:20px;animation:dist-open-ripple .6s ease-out forwards;pointer-events:none}
+    #dist-open{cursor:pointer;padding:13px 16px!important;font-size:13px!important;font-weight:800!important;letter-spacing:.4px;text-transform:uppercase;border-radius:14px!important;transition:all .25s cubic-bezier(0.4, 0, 0.2, 1)!important;justify-content:center}
+    #dist-open:hover{transform:translateY(-1px) scale(1.01)}
+    #dist-open:active{transform:translateY(0) scale(.99)}
+    #dist-open.dist-open-ready{animation:dist-open-pulse 2.4s ease-in-out infinite;background:linear-gradient(135deg,#22c55e 0%,#10b981 100%)!important;border:1px solid rgba(34,197,94,0.7)!important;color:#fff!important;box-shadow:0 6px 24px rgba(34,197,94,0.45),inset 0 1px 0 rgba(255,255,255,0.18)!important}
+    #dist-open.dist-open-ready:hover{box-shadow:0 10px 32px rgba(34,197,94,0.6),inset 0 1px 0 rgba(255,255,255,0.25)!important}
+    #dist-open .dist-open-ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,0.5);width:20px;height:20px;animation:dist-open-ripple .6s ease-out forwards;pointer-events:none}
+    #dist-info{transition:all .3s ease}
+    #dist-info.has-deals{background:linear-gradient(135deg,rgba(34,197,94,0.18),rgba(16,185,129,0.10))!important;border-color:rgba(34,197,94,0.35)!important;color:#86efac!important}
     #dist-autocopy-toggle:checked + span {
       background: rgba(99,102,241,0.6);
     }
@@ -471,18 +1012,17 @@ function createPanel() {
   document.head.appendChild(style);
 
   panel.innerHTML = `
-    <div id="dist-drag-handle" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:6px 8px;border-radius:12px;background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(139,92,246,0.1));border:1px solid rgba(99,102,241,0.3);cursor:move;user-select:none;box-shadow:0 2px 12px rgba(0,0,0,0.25),inset 0 1px 0 rgba(255,255,255,0.05)">
-      <div style="display:flex;align-items:center;gap:5px">
-        <div style="width:7px;height:7px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7)"></div>
-        <span style="font-weight:700;font-size:11px;letter-spacing:.1px;color:#e2e8f0;white-space:nowrap">Распределение</span>
+    <div id="dist-drag-handle" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:7px 10px;border-radius:14px;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(139,92,246,0.10));border:1px solid rgba(99,102,241,0.32);cursor:move;user-select:none;box-shadow:0 4px 16px rgba(0,0,0,0.30),inset 0 1px 0 rgba(255,255,255,0.06)">
+      <div style="display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden">
+        <div style="width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#a855f7);flex-shrink:0;box-shadow:0 0 10px rgba(99,102,241,0.7)"></div>
+        <span style="font-weight:800;font-size:11.5px;letter-spacing:.4px;background:linear-gradient(135deg,#e2e8f0,#a5b4fc);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase">Распределение</span>
       </div>
-      <div style="display:flex;flex-direction:row;gap:3px;align-items:center"><div id="dist-flappy-btn" class="dist-icon" title="Flappy Bird" style="width:20px;height:20px;font-size:11px">🐦</div><div id="dist-slots-btn" class="dist-icon" title="Слоты" style="width:20px;height:20px;font-size:11px">🎰</div><div id="dist-stats-btn" class="dist-icon" title="Статистика" style="width:20px;height:20px;font-size:11px">📊</div><div id="dist-motivator-btn" class="dist-icon" title="Мотиватор" style="width:20px;height:20px;font-size:11px">🏆</div><div id="dist-refresh" class="dist-icon" title="Сбросить" style="width:20px;height:20px;font-size:11px">↻</div><div id="dist-close" class="dist-icon" title="Свернуть" style="width:20px;height:20px;font-size:13px;font-weight:300">−</div></div>
-      </div>
+      <div style="display:flex;flex-direction:row;gap:3px;align-items:center;flex-shrink:0"><div id="dist-flappy-btn" class="dist-icon" title="Flappy Bird" style="width:20px;height:20px;font-size:11px;flex-shrink:0">🐦</div><div id="dist-slots-btn" class="dist-icon" title="Слоты" style="width:20px;height:20px;font-size:11px;flex-shrink:0">🎰</div><div id="dist-stats-btn" class="dist-icon" title="Статистика" style="width:20px;height:20px;font-size:11px;flex-shrink:0">📊</div><div id="dist-motivator-btn" class="dist-icon" title="Мотиватор" style="width:20px;height:20px;font-size:11px;flex-shrink:0">🏆</div><div id="dist-settings-btn" class="dist-icon" title="Настройки" style="width:20px;height:20px;font-size:11px;flex-shrink:0">⚙️</div><div id="dist-refresh" class="dist-icon" title="Сбросить" style="width:20px;height:20px;font-size:11px;flex-shrink:0">↻</div><div id="dist-close" class="dist-icon" title="Скрыть расширение" style="width:20px;height:20px;font-size:13px;font-weight:300;flex-shrink:0">−</div></div>
     </div>
     <div id="dist-fav-subs" style="display:none;padding:0 2px 0;"></div>
     <div id="dist-buttons" style="overflow-y:auto;max-height:50vh;padding-right:3px;margin-bottom:8px"></div>
     <div class="dist-divider"></div>
-    <div id="dist-info" style="padding:10px 14px;margin:6px 0;font-size:11px;font-weight:600;color:#c7d2fe;background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(139,92,246,0.08));border-radius:10px;border:1px solid rgba(99,102,241,0.25);text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.2),inset 0 1px 0 rgba(255,255,255,0.05);transition:all .3s ease">Выделение снято</div>
+    <div id="dist-info" style="padding:11px 14px;margin:6px 0;font-size:11px;font-weight:700;color:#c7d2fe;background:linear-gradient(135deg,rgba(99,102,241,0.18),rgba(139,92,246,0.10));border-radius:12px;border:1px solid rgba(99,102,241,0.28);text-align:center;box-shadow:0 4px 14px rgba(0,0,0,0.25),inset 0 1px 0 rgba(255,255,255,0.06);transition:all .3s ease;letter-spacing:.3px">Выделение снято</div>
     <div class="dist-control-wrap">
       <input id="dist-open-count" class="dist-input" type="number" min="1" step="1" placeholder="Кол-во" />
       <select id="dist-open-from" class="dist-input">
@@ -490,18 +1030,15 @@ function createPanel() {
         <option value="end">С конца</option>
       </select>
     </div>
-    <div id="dist-open" class="dist-btn" style="justify-content:center;font-weight:700;font-size:12px;background:linear-gradient(135deg,rgba(99,102,241,0.25),rgba(139,92,246,0.15));border:1px solid rgba(99,102,241,0.4);color:#c7d2fe;margin-bottom:6px;box-shadow:0 4px 15px rgba(99,102,241,0.2);position:relative;overflow:hidden"><span id="dist-open-icon" style="font-size:14px;transition:transform .3s ease">▶</span> <span id="dist-open-text">Открыть сделки</span> <span id="dist-open-count-badge" style="display:none;margin-left:4px;padding:2px 7px;background:linear-gradient(135deg,#22c55e,#10b981);color:#fff;font-size:10px;font-weight:800;border-radius:20px;min-width:18px;text-align:center;box-shadow:0 2px 8px rgba(34,197,94,0.4)">0</span></div>
-    <div class="dist-divider"></div>
-    <div id="dist-autocopy-section" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;margin:6px 0;background:rgba(99,102,241,0.08);border-radius:10px;border:1px solid rgba(99,102,241,0.2)">
-      <span style="font-size:11px;font-weight:600;color:#c7d2fe">Автокопирование</span>
-      <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">
-        <input type="checkbox" id="dist-autocopy-toggle" style="opacity:0;width:0;height:0">
-        <span style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(51,65,85,0.6);border-radius:24px;transition:.3s;border:1px solid rgba(99,102,241,0.3)"></span>
-        <span style="position:absolute;content:'';height:18px;width:18px;left:3px;bottom:3px;background:#94a3b8;border-radius:50%;transition:.3s"></span>
-      </label>
+    <div id="dist-group-tabs-row" title="Группировать открываемые вкладки в отдельную группу по категории" style="display:flex;align-items:center;justify-content:space-between;padding:9px 13px;margin:0 0 8px;background:linear-gradient(135deg,rgba(15,23,42,0.55),rgba(15,23,42,0.35));border-radius:12px;border:1px solid rgba(99,102,241,0.22);font-size:11px;font-weight:600;color:#c7d2fe;cursor:pointer;user-select:none;transition:all .2s ease">
+      <span style="display:flex;align-items:center;gap:7px">
+        <span style="font-size:14px">📁</span>
+        <span>Группа вкладок: <span id="dist-group-tabs-state" style="color:#86efac;font-weight:700">вкл</span></span>
+      </span>
+      <label class="dist-toggle" style="cursor:pointer"><input type="checkbox" id="dist-group-tabs-toggle"><span class="dist-slider"></span><span class="dist-knob"></span></label>
     </div>
-    <div id="dist-template-settings" class="dist-btn" style="margin-top:6px;color:#94a3b8;font-size:11px;background:rgba(15,23,42,0.4);border:1px solid rgba(51,65,85,0.3)">✏️ <span>Имя шаблона</span></div>
-    <div id="dist-template-current" style="margin-top:3px;font-size:10px;color:#475569;padding-left:4px">Имя: не задано</div>
+    <div id="dist-open" class="dist-btn" style="justify-content:center;font-weight:700;font-size:12px;background:linear-gradient(135deg,rgba(99,102,241,0.25),rgba(139,92,246,0.15));border:1px solid rgba(99,102,241,0.4);color:#c7d2fe;margin-bottom:6px;box-shadow:0 4px 15px rgba(99,102,241,0.2);position:relative;overflow:hidden"><span id="dist-open-icon" style="font-size:14px;transition:transform .3s ease">▶</span> <span id="dist-open-text">Открыть сделки</span> <span id="dist-open-count-badge" style="display:none;margin-left:4px;padding:2px 7px;background:linear-gradient(135deg,#22c55e,#10b981);color:#fff;font-size:10px;font-weight:800;border-radius:20px;min-width:18px;text-align:center;box-shadow:0 2px 8px rgba(34,197,94,0.4)">0</span></div>
+    <div id="dist-template-settings" class="dist-btn" title="Настройки имени и редактор шаблонов" style="margin-top:6px;color:#c7d2fe;font-size:11.5px;background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(139,92,246,0.08));border:1px solid rgba(99,102,241,0.28);justify-content:center;font-weight:700">✏️ <span id="dist-template-btn-text">Имя &amp; шаблоны</span></div>
   `;
   document.body.appendChild(panel);
   enablePanelDragging(panel);
@@ -536,6 +1073,8 @@ function createPanel() {
     ro.observe(panel);
   }
 
+  loadActiveState();
+
   const btns = panel.querySelector("#dist-buttons");
   addTelegram(btns); addUC(btns); addRoblox(btns); addDonate(btns); addGiftCard(btns);
   addSimple(btns, "promo"); addSimple(btns, "keys"); addNeural(btns); addSimple(btns, "steamgift");
@@ -543,8 +1082,52 @@ function createPanel() {
   addAccount(btns);
   addSimple(btns, "notion"); addSimple(btns, "chesscom");
 
+  // После добавления всех кнопок, восстанавливаем их визуальное состояние
+  btns.querySelectorAll(".dist-btn").forEach(btn => {
+    // Ищем ключ категории по тексту (не очень надежно, но ключи не хранятся в DOM)
+    // Лучше передавать ключи при создании. 
+  });
+  
+  // КОРРЕКТНО: Вызываем обновление сделок если есть активная категория
+  if (activeCategories.size > 0) {
+    // Ждем немного чтобы DOM сделок прогрузился, но меньше чем раньше
+    setTimeout(() => {
+      updateMergedDeals();
+      // Также подсвечиваем "Все" кнопки если они активны
+      getCategoryContainers().forEach(container => {
+        const allBtn = container.querySelector(".sub-all");
+        if (allBtn && (activeStarSubs.has("all") || activeUCSubs.has("all") || activeTelegramSubs.has("all") || activePubgSubs.has("all") || activeRobloxPromoSubs.has("all") || activeRobloxSubs.has("all") || activeArenaSubs.has("all") || activeGiftCardSubs.has("all") || activeGiftarySubs.has("all") || activeDonateSubs.has("all") || activeNeuralSubs.has("all") || activeAccountSubs.has("all") || activeDessluHubSubs.has("all"))) {
+           allBtn.classList.add("active");
+        }
+      });
+    }, 400);
+  }
+
   const openCountInput = panel.querySelector("#dist-open-count");
   if (openCountInput) openCountInput.addEventListener("input", () => { const n=Number(openCountInput.value); if(!Number.isFinite(n)||n<1) return; openCountInput.value=String(Math.floor(n)); });
+
+  // Переключатель группировки вкладок
+  const groupToggle = panel.querySelector("#dist-group-tabs-toggle");
+  const groupStateLabel = panel.querySelector("#dist-group-tabs-state");
+  if (groupToggle && groupStateLabel) {
+    const updateGroupLabel = () => {
+      groupStateLabel.textContent = groupToggle.checked ? "вкл" : "выкл";
+      groupStateLabel.style.color = groupToggle.checked ? "#86efac" : "#fbbf24";
+    };
+    const stored = localStorage.getItem('dist_group_tabs_enabled');
+    groupToggle.checked = stored === null ? true : stored !== 'false';
+    updateGroupLabel();
+    groupToggle.onchange = () => {
+      localStorage.setItem('dist_group_tabs_enabled', groupToggle.checked ? 'true' : 'false');
+      updateGroupLabel();
+    };
+    // Клик по строке тоже переключает
+    panel.querySelector("#dist-group-tabs-row").addEventListener("click", (e) => {
+      if (e.target === groupToggle || e.target.closest("label")) return;
+      groupToggle.checked = !groupToggle.checked;
+      groupToggle.dispatchEvent(new Event("change"));
+    });
+  }
   panel.querySelector("#dist-template-settings").onclick = () => { if (typeof window.openGreetingNamePrompt === "function") window.openGreetingNamePrompt(); };
 
   // Open deals button with click ripple animation
@@ -566,34 +1149,16 @@ function createPanel() {
     openDeals();
   };
 
-  // Initialize auto-copy toggle
-  const autoCopyToggle = panel.querySelector('#dist-autocopy-toggle');
-  const autoCopyEnabled = localStorage.getItem('dist_autocopy_enabled');
-  
-  // Default to enabled if not set
-  if (autoCopyEnabled === null) {
-    localStorage.setItem('dist_autocopy_enabled', 'true');
-    autoCopyToggle.checked = true;
-  } else {
-    autoCopyToggle.checked = autoCopyEnabled === 'true';
-  }
-  
-  // Update visual state
-  updateToggleVisual(autoCopyToggle);
-  
-  // Add change listener
-  autoCopyToggle.addEventListener('change', () => {
-    const isEnabled = autoCopyToggle.checked;
-    localStorage.setItem('dist_autocopy_enabled', isEnabled ? 'true' : 'false');
-    updateToggleVisual(autoCopyToggle);
-    if (typeof showMiniStatus === 'function') {
-      showMiniStatus(isEnabled ? '✅ Автокопирование включено' : '⏸️ Автокопирование выключено');
-    }
-  });
+  panel.querySelector("#dist-settings-btn").onclick = () => openSettingsPopup();
+
+  // Автообновление полностью отключено
+  autoReloadEnabled = false;
+  localStorage.removeItem('dist_autoreload_enabled');
   
   function updateToggleVisual(toggle) {
     const slider = toggle.nextElementSibling;
     const knob = slider.nextElementSibling;
+    if (!slider || !knob) return;
     if (toggle.checked) {
       slider.style.background = 'rgba(99,102,241,0.6)';
       knob.style.transform = 'translateX(20px)';
@@ -605,25 +1170,70 @@ function createPanel() {
     }
   }
 
-  // Ctrl+scroll для масштабирования панели
+  // Ctrl+scroll для масштабирования панели — с авто-удержанием в пределах экрана
+  function clampPanelInViewport() {
+    // Получаем визуальный bbox с учётом масштаба
+    const rect = panel.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 8;
+
+    // Текущие фактические координаты левого/верхнего края (в layout, без transform)
+    const cs = getComputedStyle(panel);
+    const hasLeft = panel.style.left && panel.style.left !== "auto";
+    const hasTop = panel.style.top && panel.style.top !== "auto";
+    let leftLayout = hasLeft ? parseFloat(panel.style.left) : panel.offsetLeft;
+    let topLayout = hasTop ? parseFloat(panel.style.top) : panel.offsetTop;
+
+    // Дельта между визуальной позицией и layout-позицией (создаётся transform-ом)
+    const deltaX = rect.left - leftLayout;
+    const deltaY = rect.top - topLayout;
+
+    // Куда нужно сдвинуть, чтобы вписаться
+    let targetLeft = rect.left;
+    let targetTop = rect.top;
+    if (rect.right > vw - margin) targetLeft = vw - margin - rect.width;
+    if (rect.left < margin) targetLeft = margin;
+    if (rect.bottom > vh - margin) targetTop = vh - margin - rect.height;
+    if (rect.top < margin) targetTop = margin;
+
+    if (targetLeft !== rect.left || targetTop !== rect.top) {
+      panel.style.right = "auto";
+      panel.style.left = (targetLeft - deltaX) + "px";
+      panel.style.top = (targetTop - deltaY) + "px";
+      try { savePanelPosition(targetLeft - deltaX, targetTop - deltaY); } catch(_) {}
+    }
+  }
+
   panel.addEventListener("wheel", e => {
     if (!e.ctrlKey) return;
     e.preventDefault();
     e.stopPropagation();
+    const prevScale = panelScale;
     panelScale = Math.max(0.7, Math.min(2.5, panelScale + (e.deltaY < 0 ? 0.05 : -0.05)));
+    if (panelScale === prevScale) return;
     panel.style.transform = "scale(" + panelScale + ")";
-    panel.style.transformOrigin = "top right";
     try { localStorage.setItem('dist_panel_scale_v2', panelScale); } catch(_) {}
+    // Сразу подгоняем позицию, чтобы панель не уехала за край
+    clampPanelInViewport();
   }, { passive: false });
+
+  // На ресайз окна тоже подгоняем
+  window.addEventListener("resize", () => {
+    if (panel.style.display !== "none") clampPanelInViewport();
+  });
   panel.querySelector("#dist-refresh").onclick = () => resetState("Обновлено");
   panel.querySelector("#dist-stats-btn").onclick = e => { e.stopPropagation(); openStatsPopup(); };
+  panel.querySelector("#dist-settings-btn").onclick = () => openSettingsPopup();
   renderFavSubsBlock();
 
   // ── Иконка ⏰ ──
   const icon = document.createElement("div");
   icon.id = "dist-icon-btn";
   icon.textContent = "⏰";
-  icon.style.cssText = `position:fixed;font-size:22px;cursor:grab;z-index:999999;user-select:none;width:48px;height:48px;border-radius:16px;background:linear-gradient(135deg,rgba(99,102,241,0.3),rgba(139,92,246,0.15));backdrop-filter:blur(16px);border:1px solid rgba(99,102,241,0.4);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 24px rgba(0,0,0,0.5),0 0 30px rgba(99,102,241,0.2),inset 0 1px 0 rgba(255,255,255,0.1);animation:dist-icon-pulse 3s ease-in-out infinite;`;
+  icon.style.cssText = `position:fixed;font-size:22px;cursor:grab;z-index:999999;user-select:none;width:48px;height:48px;border-radius:16px;background:radial-gradient(circle at 30% 30%,rgba(139,92,246,0.35),rgba(99,102,241,0.18) 60%,rgba(8,10,24,0.85));backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);border:1px solid rgba(99,102,241,0.45);display:flex;align-items:center;justify-content:center;box-shadow:0 8px 28px rgba(0,0,0,0.55),0 0 36px rgba(99,102,241,0.25),inset 0 1px 0 rgba(255,255,255,0.12);transition:transform .2s ease,box-shadow .3s ease,border-color .2s ease;`;
+  icon.addEventListener('mouseenter', () => { icon.style.animation = 'dist-icon-pulse 1.5s ease-in-out infinite'; icon.style.borderColor = 'rgba(168,85,247,0.7)'; });
+  icon.addEventListener('mouseleave', () => { icon.style.animation = 'none'; icon.style.borderColor = 'rgba(99,102,241,0.45)'; });
   document.body.appendChild(icon);
 
   // Устанавливаем начальную позицию без transform
@@ -643,6 +1253,18 @@ function createPanel() {
       icon.style.top = y + "px";
       saveIconPosition(x, y);
     });
+  }
+
+  // На страницах сделки/чата панель всегда скрыта (видна только иконка),
+  // чтобы не мешала работе с самой сделкой. На остальных страницах — как было.
+  const isDealOrChatPage = /\/(deal|chats)\//.test(location.pathname || location.href);
+  const savedVisible = localStorage.getItem('dist_panel_visible');
+  if (!isDealOrChatPage && savedVisible === 'true') {
+    panel.style.display = "block";
+    icon.style.display = "none";
+  } else {
+    panel.style.display = "none";
+    icon.style.display = "flex";
   }
 
   let iconMoved = false;
@@ -696,10 +1318,13 @@ function createPanel() {
     try { localStorage.removeItem(PANEL_POS_KEY); } catch (_) {}
     icon.style.display = "none";
     panel.style.display = "block";
-    
+    localStorage.setItem('dist_panel_visible', 'true');
+
     requestAnimationFrame(() => {
       panel.style.opacity = "1";
       panel.style.transition = "opacity .25s ease, transform .3s cubic-bezier(0.4, 0, 0.2, 1)";
+      // Если сохранённый масштаб большой — поджимаем в экран
+      try { clampPanelInViewport(); } catch(_) {}
     });
     if (typeof window._distShowMotivator === "function") window._distShowMotivator();
     if (typeof window._distShowLinks === "function") window._distShowLinks();
@@ -708,6 +1333,7 @@ function createPanel() {
   panel.querySelector("#dist-close").onclick = () => {
     panel.style.display = "none";
     icon.style.display = "flex";
+    localStorage.setItem('dist_panel_visible', 'false');
     const mot = document.querySelector("#dist-mot-popup");
     if (mot) mot.style.display = "none";
     const lp = document.querySelector("#dist-links-popup");
@@ -715,6 +1341,40 @@ function createPanel() {
     const stats = document.querySelector("#dist-stats-popup");
     if (stats) stats.style.display = "none";
   };
+
+  // ── Автозакрытие панели при переходе на новую страницу ──
+  function closeAllPanels() {
+    panel.style.display = "none";
+    icon.style.display = "flex";
+    localStorage.setItem('dist_panel_visible', 'false');
+    const mot = document.querySelector("#dist-mot-popup");
+    if (mot) mot.style.display = "none";
+    const stats = document.querySelector("#dist-stats-popup");
+    if (stats) stats.style.display = "none";
+    // Попап сервисов скрываем только на страницах сделки/чата.
+    // На нормальных страницах он остаётся видимым (это независимый виджет).
+    const lp = document.querySelector("#dist-links-popup");
+    if (lp && /\/(deal|chats)\//.test(location.pathname || location.href)) {
+      lp.style.display = "none";
+    }
+  }
+
+  // Перехватываем SPA-навигацию через history.pushState / replaceState
+  (function patchHistory() {
+    const _push = history.pushState.bind(history);
+    const _replace = history.replaceState.bind(history);
+    history.pushState = function(...args) {
+      _push(...args);
+      closeAllPanels();
+    };
+    history.replaceState = function(...args) {
+      _replace(...args);
+      closeAllPanels();
+    };
+  })();
+
+  // Кнопка «Назад/Вперёд» браузера
+  window.addEventListener('popstate', closeAllPanels);
 
   // ── утилита: перетаскивание плавающего попапа ──
   function makeFloatingPopup(el, posKey, defaultPos) {
@@ -822,26 +1482,41 @@ function createPanel() {
     // ── Авто-счётчик: наблюдаем за текстом "покупатель проверяет товар" ──
     const TRIGGER_PHRASES = ["покупатель проверяет товар", "buyer is checking"];
     const seenNodes = new WeakSet();
+    let _autoObsTimer = null;
+    let _autoObsPendingNodes = [];
     const autoObs = new MutationObserver(mutations => {
+      // 🔑 ОПТИМИЗАЦИЯ: собираем ноды и обрабатываем пачкой с дебаунсом
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node.nodeType !== 1 || seenNodes.has(node)) continue;
           seenNodes.add(node);
-          const text = (node.innerText || node.textContent || "").toLowerCase();
-          if (TRIGGER_PHRASES.some(p => text.includes(p))) {
-            dealCount++;
-            renderPopup();
-            saveMotivator();
-            if (typeof recordDealStat === 'function') recordDealStat(typeof activeCategory !== 'undefined' ? activeCategory : 'unknown');
-            // Мигание счётчика для визуального подтверждения
-            const countEl = popup.querySelector("#mot-pop-count");
-            if (countEl) {
-              countEl.style.color = "#4ade80";
-              setTimeout(() => { countEl.style.color = "#6366f1"; }, 800);
-            }
-          }
+          _autoObsPendingNodes.push(node);
         }
       }
+      if (_autoObsTimer || !_autoObsPendingNodes.length) return;
+      _autoObsTimer = setTimeout(() => {
+        _autoObsTimer = null;
+        const nodes = _autoObsPendingNodes;
+        _autoObsPendingNodes = [];
+        let found = false;
+        for (const node of nodes) {
+          const text = (node.textContent || "").toLowerCase();
+          if (TRIGGER_PHRASES.some(p => text.includes(p))) {
+            dealCount++;
+            found = true;
+            if (typeof recordDealStat === 'function') recordDealStat(typeof activeCategory !== 'undefined' ? activeCategory : 'unknown');
+          }
+        }
+        if (found) {
+          renderPopup();
+          saveMotivator();
+          const countEl = popup.querySelector("#mot-pop-count");
+          if (countEl) {
+            countEl.style.color = "#4ade80";
+            setTimeout(() => { countEl.style.color = "#6366f1"; }, 800);
+          }
+        }
+      }, 500);
     });
     autoObs.observe(document.body, { childList: true, subtree: true });
 
@@ -914,7 +1589,10 @@ function createPanel() {
       });
 
       lp.appendChild(list);
-      lp.querySelector("#dist-links-close").onclick = () => { lp.style.display = "none"; };
+      lp.querySelector("#dist-links-close").onclick = () => {
+        lp.style.display = "none";
+        try { localStorage.setItem('dist_links_hidden', 'true'); } catch(_) {}
+      };
       lp.querySelector("#dist-links-edit").onclick = () => openServicesEditor();
 
       // Единые обработчики drag (не накапливаются)
@@ -1029,19 +1707,84 @@ function openServicesEditor() {
     }
 
     renderLinks();
-    window._distShowLinks = () => { lp.style.display = "block"; };
 
-    // Ctrl+scroll для масштабирования сервисов
+    // Поджимаем попап в видимую область экрана
+    function clampLpInViewport() {
+      const r = lp.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const vw = window.innerWidth, vh = window.innerHeight, m = 8;
+      const hasLeft = lp.style.left && lp.style.left !== "auto";
+      const layoutLeft = hasLeft ? parseFloat(lp.style.left) : lp.offsetLeft;
+      const layoutTop = lp.style.top ? parseFloat(lp.style.top) : lp.offsetTop;
+      const dx = r.left - layoutLeft, dy = r.top - layoutTop;
+      let tl = r.left, tt = r.top;
+      if (r.right > vw - m) tl = vw - m - r.width;
+      if (r.left < m) tl = m;
+      if (r.bottom > vh - m) tt = vh - m - r.height;
+      if (r.top < m) tt = m;
+      if (tl !== r.left || tt !== r.top) {
+        lp.style.right = "auto";
+        lp.style.left = (tl - dx) + "px";
+        lp.style.top = (tt - dy) + "px";
+        try { localStorage.setItem(LINKS_POS, JSON.stringify({ x: tl - dx, y: tt - dy })); } catch(_) {}
+      }
+    }
+
+    window._distShowLinks = (force) => {
+      // На страницах сделки/чата попап не показываем
+      if (/\/(deal|chats)\//.test(location.pathname || location.href)) return;
+      // Если пользователь явно закрыл попап — не показываем без force
+      if (!force && localStorage.getItem('dist_links_hidden') === 'true') return;
+      try { localStorage.removeItem('dist_links_hidden'); } catch(_) {}
+      lp.style.display = "block";
+      requestAnimationFrame(clampLpInViewport);
+    };
+
+    window._distHideLinks = () => { lp.style.display = "none"; };
+
+    // Ctrl+scroll для масштабирования сервисов — с авто-удержанием в экране
     let lpScale = parseFloat(localStorage.getItem('dist_lp_scale_v1') || '1');
+    // Защита от ранее сохранённого кривого масштаба
+    if (!Number.isFinite(lpScale) || lpScale < 0.5 || lpScale > 2.0) {
+      lpScale = 1;
+      try { localStorage.setItem('dist_lp_scale_v1', '1'); } catch(_) {}
+    }
     lp.style.transform = 'scale(' + lpScale + ')';
     lp.style.transformOrigin = 'top left';
     lp.addEventListener('wheel', e => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      lpScale = Math.max(0.5, Math.min(3.0, lpScale + (e.deltaY < 0 ? 0.05 : -0.05)));
+      lpScale = Math.max(0.5, Math.min(2.0, lpScale + (e.deltaY < 0 ? 0.05 : -0.05)));
       lp.style.transform = 'scale(' + lpScale + ')';
       try { localStorage.setItem('dist_lp_scale_v1', String(lpScale)); } catch(_) {}
+      clampLpInViewport();
     }, { passive: false });
+
+    window.addEventListener("resize", () => {
+      if (lp.style.display !== "none") clampLpInViewport();
+    });
+
+    // Попап с сервисами показываем по умолчанию на всех нормальных страницах
+    // (он независим от панели — это самостоятельный виджет с быстрыми ссылками)
+    if (!/\/(deal|chats)\//.test(location.pathname || location.href)) {
+      // Небольшая задержка чтобы DOM окончательно прорисовался
+      setTimeout(() => window._distShowLinks(), 100);
+    }
+
+    // При SPA-навигации возвращаем попап на нормальных страницах
+    let _lastUrlForLp = location.href;
+    setInterval(() => {
+      if (location.href === _lastUrlForLp) return;
+      _lastUrlForLp = location.href;
+      const isDealOrChat = /\/(deal|chats)\//.test(location.pathname || location.href);
+      if (isDealOrChat) {
+        lp.style.display = "none";
+      } else {
+        // Сбрасываем флаг скрытия — навигация на новую страницу = новый сеанс
+        try { localStorage.removeItem('dist_links_hidden'); } catch(_) {}
+        window._distShowLinks();
+      }
+    }, 1000);
 
     // ── Слоты 🎰 ──
   (function initSlots() {
@@ -1430,4 +2173,74 @@ function openServicesEditor() {
       }
     }
   })();
+}
+
+let autoReloadTimer = null;
+// Автообновление полностью удалено — заглушки для обратной совместимости
+function startAutoReloadTimer() {}
+function stopAutoReloadTimer() {
+  if (autoReloadTimer) { clearInterval(autoReloadTimer); autoReloadTimer = null; }
+}
+
+function openSettingsPopup() {
+  document.querySelector("#dist-settings-popup")?.remove();
+  const popup = document.createElement("div");
+  popup.id = "dist-settings-popup";
+  popup.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:300px;background:rgba(10,15,28,0.92);backdrop-filter:blur(24px);border:1px solid rgba(99,102,241,0.35);border-radius:24px;padding:24px;z-index:10000001;box-shadow:0 25px 60px rgba(0,0,0,0.7),0 0 40px rgba(99,102,241,0.15);font-family:Inter,sans-serif;color:#e2e8f0;`;
+  
+  popup.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:10px;height:10px;border-radius:50%;background:#6366f1;box-shadow:0 0 12px #6366f1"></div>
+        <span style="font-weight:900;font-size:15px;letter-spacing:0.8px;color:#fff">НАСТРОЙКИ СИСТЕМЫ</span>
+      </div>
+      <div id="dist-settings-close" style="cursor:pointer;font-size:24px;color:#94a3b8;transition:all .2s;line-height:1">&times;</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(99,102,241,0.15);border-radius:14px;border:1px solid rgba(99,102,241,0.25)">
+        <span style="font-size:13px;font-weight:700;color:#fff">Активность (Вкл/Выкл)</span>
+        <label class="dist-toggle"><input type="checkbox" id="dist-master-toggle-pop"><span class="dist-slider"></span><span class="dist-knob"></span></label>
+      </div>
+      <div style="height:1px;background:rgba(255,255,255,0.05);margin:4px 0"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px">
+        <span style="font-size:12px;color:#94a3b8;font-weight:500">Распределение</span>
+        <label class="dist-toggle"><input type="checkbox" id="dist-distribution-toggle-pop"><span class="dist-slider"></span><span class="dist-knob"></span></label>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px">
+        <span style="font-size:12px;color:#94a3b8;font-weight:500">Подсветка сделок</span>
+        <label class="dist-toggle"><input type="checkbox" id="dist-highlight-toggle-pop"><span class="dist-slider"></span><span class="dist-knob"></span></label>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px">
+        <span style="font-size:12px;color:#94a3b8;font-weight:500">Автокопирование ID</span>
+        <label class="dist-toggle"><input type="checkbox" id="dist-autocopy-toggle-pop"><span class="dist-slider"></span><span class="dist-knob"></span></label>
+      </div>
+      <!-- Авто-обновление удалено -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px">
+        <span style="font-size:12px;color:#94a3b8;font-weight:500">Авто-приветствие</span>
+        <label class="dist-toggle"><input type="checkbox" id="dist-greeting-toggle-pop"><span class="dist-slider"></span><span class="dist-knob"></span></label>
+      </div>
+    </div>
+    <div style="margin-top:24px;text-align:center;font-size:10px;color:#475569;font-weight:800;letter-spacing:1.5px;text-transform:uppercase">Antigravity Premium v3.5</div>
+  `;
+  document.body.appendChild(popup);
+
+  function bindToggle(id, storageKey, defaultValue = "true") {
+    const el = popup.querySelector("#" + id);
+    if (!el) return;
+    const val = localStorage.getItem(storageKey);
+    el.checked = val === null ? (defaultValue === "true") : (val === "true");
+    el.onchange = () => {
+      localStorage.setItem(storageKey, el.checked ? "true" : "false");
+      // Автообновление удалено
+      if (typeof updateMergedDeals === "function") updateMergedDeals();
+    };
+  }
+
+  bindToggle("dist-master-toggle-pop", "dist_master_enabled", "true");
+  bindToggle("dist-distribution-toggle-pop", "dist_distribution_enabled", "true");
+  bindToggle("dist-highlight-toggle-pop", "dist_highlight_enabled", "true");
+  bindToggle("dist-autocopy-toggle-pop", "dist_autocopy_enabled", "true");
+  bindToggle("dist-greeting-toggle-pop", "dist_greeting_enabled", "true");
+
+  popup.querySelector("#dist-settings-close").onclick = () => popup.remove();
 }

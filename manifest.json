@@ -10,8 +10,8 @@
     "128": "icon.png"
   },
 
-  "permissions": ["tabs", "storage", "downloads", "clipboardWrite", "offscreen", "notifications"],
-  "host_permissions": ["https://playerok.com/*", "https://fragment.com/*", "file:///*"],
+  "permissions": ["tabs", "tabGroups", "storage", "downloads", "clipboardWrite", "offscreen", "notifications"],
+  "host_permissions": ["https://playerok.com/*", "https://fragment.com/*", "https://epingrid.com/*", "file:///*"],
 
   "background": {
     "service_worker": "background.js"
@@ -32,7 +32,11 @@
     },
     {
       "matches": ["https://fragment.com/*"],
-      "js": ["fragment.js"]
+      "js": ["recipient-history.js", "fragment.js"]
+    },
+    {
+      "matches": ["https://epingrid.com/*"],
+      "js": ["recipient-history.js", "epingrid.js"]
     }
   ]
-}
+}

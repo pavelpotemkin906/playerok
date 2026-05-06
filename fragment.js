@@ -143,8 +143,13 @@
       inset: 0;
       background: linear-gradient(135deg, transparent 40%, rgba(99,102,241,0.08) 50%, transparent 60%);
       background-size: 200% 100%;
-      animation: frag-shimmer 4s ease-in-out infinite;
       pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .frag-nom-btn:hover::before {
+      animation: frag-shimmer 2s ease-in-out;
+      opacity: 1;
     }
     .frag-nom-btn:hover {
       background: rgba(99,102,241,0.15);
@@ -502,4 +507,126 @@
     customBtn.style.transform = '';
   });
 
+})();
+
+// ═══════════════════════════════════════════════════════════
+// Fragment — предупреждение при повторном вводе @username
+// Работает на всех страницах fragment.com, не только /stars
+// ═══════════════════════════════════════════════════════════
+(function () {
+  'use strict';
+
+  const HISTORY = window.distRecipientHistory;
+  if (!HISTORY) {
+    console.warn('[Fragment Warn] recipient-history.js не загружен');
+    return;
+  }
+
+  const INLINE_WARN_ATTR = 'data-dist-frag-warn-id';
+
+  function formatAgo(entry) {
+    if (!entry || !entry.ts) return '?';
+    const s = Math.max(1, Math.floor((Date.now() - entry.ts) / 1000));
+    if (s < 60) return s + ' сек назад';
+    return Math.floor(s / 60) + ' мин назад';
+  }
+
+  function isRecipientInput(inp) {
+    if (inp.disabled || inp.readOnly) return false;
+    const cs = window.getComputedStyle(inp);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    const hint = ((inp.placeholder || '') + ' ' + (inp.name || '') + ' ' + (inp.id || '')).toLowerCase();
+    // Поле с подсказкой про username/recipient или поиск по @
+    if (hint.includes('username') || hint.includes('recipient') || hint.includes('@')) return true;
+    // На Fragment поле поиска получателя — тип text/search без явного хинта
+    if ((inp.type === 'text' || inp.type === 'search' || !inp.type) && inp.offsetParent !== null) return true;
+    return false;
+  }
+
+  function showInlineWarn(inp, hit) {
+    removeInlineWarn(inp);
+    const warnId = 'dist-fw-' + Math.random().toString(36).slice(2);
+    inp.setAttribute(INLINE_WARN_ATTR, warnId);
+
+    const warn = document.createElement('div');
+    warn.id = warnId;
+    warn.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'gap:5px',
+      'margin-top:4px', 'padding:4px 8px',
+      'background:rgba(239,68,68,0.12)',
+      'border:1px solid rgba(239,68,68,0.35)',
+      'border-radius:6px',
+      'font-size:11px', 'color:#fca5a5',
+      'font-family:system-ui,sans-serif',
+      'line-height:1', 'box-sizing:border-box',
+      'pointer-events:none', 'white-space:nowrap'
+    ].join(';');
+
+    const ago = formatAgo(hit);
+    warn.innerHTML = '<span style="font-size:13px">⚠️</span><span>Уже использовался <b style="color:#f87171">' + ago + '</b></span>';
+
+    if (inp.parentNode) {
+      inp.parentNode.insertBefore(warn, inp.nextSibling);
+    }
+  }
+
+  function removeInlineWarn(inp) {
+    const warnId = inp.getAttribute && inp.getAttribute(INLINE_WARN_ATTR);
+    if (warnId) {
+      document.getElementById(warnId)?.remove();
+      inp.removeAttribute(INLINE_WARN_ATTR);
+    }
+  }
+
+  function attachWatcher(inp) {
+    if (inp._distFragWatching) return;
+    inp._distFragWatching = true;
+
+    function check() {
+      let value = (inp.value || '').trim().replace(/^@+/, '');
+      if (!value || value.length < 4) { removeInlineWarn(inp); return; }
+      const hit = HISTORY.checkSync(value) || HISTORY.checkSync('@' + value);
+      if (hit) {
+        showInlineWarn(inp, hit);
+      } else {
+        removeInlineWarn(inp);
+      }
+    }
+
+    inp.addEventListener('input', check);
+    inp.addEventListener('paste', () => setTimeout(check, 0));
+    inp.addEventListener('blur', () => {
+      let value = (inp.value || '').trim();
+      if (value && value.length >= 4) {
+        HISTORY.record(value, 'Fragment');
+      }
+    });
+  }
+
+  const INPUT_SELECTOR = 'input[type="text"], input[type="search"], input:not([type])';
+
+  function scanRoot(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (root.matches?.(INPUT_SELECTOR) && isRecipientInput(root)) attachWatcher(root);
+    const inputs = root.querySelectorAll?.(INPUT_SELECTOR);
+    if (inputs) for (const inp of inputs) {
+      if (isRecipientInput(inp)) attachWatcher(inp);
+    }
+  }
+
+  scanRoot(document.body);
+
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'IFRAME', 'IMG', 'SVG', 'PATH', 'NOSCRIPT']);
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (SKIP_TAGS.has(node.tagName)) continue;
+        scanRoot(node);
+      }
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  console.log('[Fragment] Защита от повторного ввода @username активна (5 мин)');
 })();
